@@ -2,10 +2,10 @@ require('dotenv').config();
 
 const express = require('express');
 const cors = require('cors');
-const { verifyFirebaseToken } = require('./api/middleware/auth');
+const { verifyFirebaseToken } = require('./middleware/auth');
 
 // Import our new router
-const clusterRoutes = require('./api/routes/clusters');
+const clusterRoutes = require('./routes/clusters');
 
 const app = express();
 
