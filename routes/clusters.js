@@ -8,51 +8,24 @@ const webflow = require('../services/webflow');
 
 const router = express.Router();
 
+// --- TEMPORARY DEBUGGING ROUTE ---
+// --- TEMPORARY DEBUGGING ROUTE ---
 router.post('/', async (req, res) => {
-  try {
-    const { uid } = req.user;
-    const { clusterName, shortDescription, longDescription } = req.body;
+  // We know the code gets here successfully.
+  console.log("--- DEBUGGING WEBLFOW CLIENT ---");
+  
+  // Let's print the top-level keys available on the 'webflow' object.
+  // This will show us if it has 'sites', 'collections', etc.
+  console.log("Available keys on webflow client:", Object.keys(webflow));
 
-    if (!clusterName || !shortDescription) {
-      return res.status(400).json({ message: 'Cluster Name and Short Description are required.' });
-    }
-
-    const collectionId = process.env.WEBFLOW_CLUSTER_COLLECTION_ID;
-    const fields = {
-      'name': clusterName,
-      'short-description': shortDescription,
-      'long-description': longDescription,
-      '_archived': false,
-      '_draft': false
-    };
-
-    // --- FINAL FIX IS HERE ---
-    const newWebflowItem = await webflow.items.create({
-      collectionId: collectionId,
-      fields: fields
-    }, { live: true });
-
-    const newClusterId = newWebflowItem.id;
-    const db = getFirestore();
-    const userRef = db.collection('users').doc(uid);
-
-    await userRef.set({
-      clusters: FieldValue.arrayUnion(newClusterId)
-    }, { merge: true });
-
-    res.status(201).json({
-      message: 'Cluster created successfully!',
-      clusterId: newClusterId,
-      data: newWebflowItem
-    });
-
-  } catch (error) {
-    console.error('Error creating cluster:', error);
-    if (error.response && error.response.data) {
-      console.error('Webflow API Error:', error.response.data);
-    }
-    res.status(500).json({ message: 'Server error while creating cluster.' });
-  }
+  // Let's also log the collections object to see its methods.
+  console.log("Contents of webflow.collections:", webflow.collections);
+  
+  // Send a temporary success response so the request doesn't time out.
+  res.status(200).json({ 
+    message: "Debug information has been logged to Vercel.",
+    availableKeys: Object.keys(webflow)
+  });
 });
 
 router.post('/:clusterId/image', async (req, res) => {
