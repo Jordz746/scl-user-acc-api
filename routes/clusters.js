@@ -1,46 +1,55 @@
-// routes/clusters.js
-
 const express = require('express');
+const { FieldValue } = require('firebase-admin/firestore');
+const { getFirestore } = require('firebase-admin/firestore');
 const webflow = require('../services/webflow');
 
 const router = express.Router();
 
-// --- TEMPORARY DIAGNOSTIC ROUTE ---
 router.post('/', async (req, res) => {
   try {
-    // We know authentication works. Now let's test the Webflow client.
-    console.log("--- DIAGNOSTIC TEST: Attempting the simplest API call: webflow.sites.list() ---");
-    
-    // This is the most basic API call. If it succeeds, the client is working.
-    const sites = await webflow.sites.list(); 
-    
-    console.log("--- DIAGNOSTIC SUCCESS ---");
-    console.log("The Webflow client is ALIVE and successfully fetched data.");
-    console.log("Sites found:", sites);
+    const { uid } = req.user;
+    const { clusterName, shortDescription, longDescription } = req.body;
 
-    // Send a success response. We are not creating a cluster in this test.
-    res.status(200).json({
-      message: "Diagnostic test successful. The Webflow client is working.",
-      sites: sites,
+    if (!clusterName || !shortDescription) {
+      return res.status(400).json({ message: 'Cluster Name and Short Description are required.' });
+    }
+
+    const collectionId = process.env.WEBFLOW_CLUSTER_COLLECTION_ID;
+    
+    // Using the v3.2.0 syntax which we now know works
+    const newWebflowItem = await webflow.collections.items.create(
+      collectionId, 
+      {
+        isArchived: false,
+        isDraft: false,
+        fieldData: {
+          'name': clusterName,
+          'short-description': shortDescription,
+          'long-description': longDescription
+        }
+      }
+    );
+
+    const newClusterId = newWebflowItem.id;
+    const db = getFirestore();
+    const userRef = db.collection('users').doc(uid);
+    await userRef.set({ clusters: FieldValue.arrayUnion(newClusterId) }, { merge: true });
+
+    res.status(201).json({
+      message: 'Cluster created successfully!',
+      clusterId: newClusterId,
+      data: newWebflowItem
     });
 
   } catch (error) {
-    console.error("--- DIAGNOSTIC FAILED ---");
-    console.error("The call to webflow.sites.list() failed. Error:", error.message);
-    
-    // This will show us what the webflow object actually contains if the call fails
-    console.error("Structure of the webflow object:", webflow);
-
-    res.status(500).json({
-      message: "Diagnostic test failed. See Vercel logs for details.",
-      error: error.message,
-    });
+    console.error('Error creating cluster:', error.message);
+    res.status(500).json({ message: 'Server error while creating cluster.', error: error.message });
   }
 });
 
-// We are disabling the image upload route for this test.
+// We can add the image upload logic back later.
 router.post('/:clusterId/image', async (req, res) => {
-    res.status(501).json({ message: 'Image upload is disabled during diagnostic test.' });
+    res.status(501).json({ message: 'Image upload not yet implemented.' });
 });
 
 module.exports = router;
