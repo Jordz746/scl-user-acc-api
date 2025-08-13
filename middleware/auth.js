@@ -15,33 +15,33 @@ if (!admin.apps.length) {
 }
 // --- End of Initialization ---
 
+// ... (the other require and initialization code stays the same) ...
 
-/**
- * Express middleware that validates Firebase ID Tokens passed in the Authorization header.
- * The Firebase ID token needs to be passed as a Bearer token in the Authorization header.
- * e.g. 'Authorization: Bearer <token>'
- * If the token is valid, the decoded token is attached to the request object as `req.user`
- * and the request is passed to the next handler.
- * If the token is not valid, a 403 Unauthorized response is sent.
- */
 const verifyFirebaseToken = async (req, res, next) => {
+  // BREADCRUMB 1: Did the middleware start?
+  console.log('Entering verifyFirebaseToken middleware...');
+  
   const authHeader = req.headers.authorization;
 
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    console.error('No Firebase ID token was passed as a Bearer token in the Authorization header.');
+    console.error('No Firebase ID token was passed.');
     return res.status(403).send('Unauthorized');
   }
 
   const idToken = authHeader.split('Bearer ')[1];
 
   try {
-    // verifyIdToken() checks if the token is valid and not expired.
+    // BREADCRUMB 2: Are we about to call Google?
+    console.log('Attempting to verify token...');
+    
+    // THE SUSPECTED HANG IS HERE:
     const decodedToken = await admin.auth().verifyIdToken(idToken);
     
-    // Attach the user's data (like their UID) to the request object.
-    // This allows subsequent handlers to know who the user is.
+    // BREADCRUMB 3: Did the call to Google succeed?
+    console.log('Token verified successfully for UID:', decodedToken.uid);
+    
     req.user = decodedToken;
-    next(); // Pass control to the next handler.
+    next();
   } catch (error) {
     console.error('Error while verifying Firebase ID token:', error);
     res.status(403).send('Unauthorized');
