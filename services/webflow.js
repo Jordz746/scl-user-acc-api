@@ -1,7 +1,10 @@
-const Webflow = require('webflow-api');
+// services/webflow.js
 
-// This is the correct way to initialize the client.
-// We import the default export, and then instantiate it with `new`.
-const webflow = new Webflow({ token: process.env.WEBFLOW_API_TOKEN });
+const { WebflowClient } = require('webflow-api');
+
+// This is the correct initialization for v3.x
+const webflow = new WebflowClient({
+  accessToken: process.env.WEBFLOW_API_TOKEN,
+});
 
 module.exports = webflow;
