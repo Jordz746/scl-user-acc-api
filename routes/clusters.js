@@ -20,9 +20,9 @@ router.post('/', async (req, res) => {
     // --- FINAL FIX IS HERE: Using the v1.x SDK syntax ---
     // Note: The `live` parameter is passed as part of the main object.
     const newWebflowItem = await webflow.createItem({
-      collectionId: process.env.WEBFLOW_CLUSTER_COLLECTION_ID,
-      live: true,
-      fields: {
+    collectionId: process.env.WEBFLOW_CLUSTER_COLLECTION_ID,
+    live: true, // v1 SDK style
+    fields: {
         'name': clusterName,
         'short-description': shortDescription,
         'long-description': longDescription,

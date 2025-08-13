@@ -1,6 +1,7 @@
-const { WebflowClient } = require('webflow-api');
+const Webflow = require('webflow-api');
 
-// Initialize the Webflow API client with the token from our environment variables
-const webflow = new WebflowClient({ token: process.env.WEBFLOW_API_TOKEN });
+// This is the correct way to initialize the client.
+// We import the default export, and then instantiate it with `new`.
+const webflow = new Webflow({ token: process.env.WEBFLOW_API_TOKEN });
 
 module.exports = webflow;
