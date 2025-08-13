@@ -11,9 +11,68 @@ const router = express.Router();
 // ... the existing POST '/' route is here ...
 // (No changes needed to the cluster creation route)
 router.post('/', async (req, res) => {
-    // ... existing code from Phase 3 ...
+  try {
+    const { uid } = req.user; // User ID from our auth middleware
+    const { clusterName, shortDescription, longDescription } = req.body;
+
+    // 1. Basic Input Validation
+    if (!clusterName || !shortDescription) {
+      return res.status(400).json({ message: 'Cluster Name and Short Description are required.' });
+    }
+
+    const collectionId = process.env.WEBFLOW_CLUSTER_COLLECTION_ID;
+
+    // 2. Prepare the data for the Webflow CMS
+    // IMPORTANT: Replace 'name', 'short-description', etc. with YOUR actual field slugs.
+    const fields = {
+      'name': clusterName,
+      'short-description': shortDescription,
+      'long-description': longDescription,
+      '_archived': false,
+      '_draft': false 
+    };
+    
+    // 3. Create the item in Webflow CMS
+    console.log("Attempting to create Webflow item...");
+    const newWebflowItem = await webflow.createItem({
+      collectionId: collectionId,
+      fields: fields
+    }, { live: true });
+    console.log("Webflow item created successfully:", newWebflowItem.id);
+
+    const newClusterId = newWebflowItem.id;
+
+    // 4. Link the new Webflow Cluster ID to the user in Firestore
+    const db = getFirestore();
+    const userRef = db.collection('users').doc(uid);
+    
+    console.log("Attempting to write to Firestore for user:", uid);
+    await userRef.set({
+        clusters: FieldValue.arrayUnion(newClusterId)
+    }, { merge: true });
+    console.log("Firestore write successful.");
+
+    // 5. Send a success response back to the client
+    // THIS IS THE LINE THAT PREVENTS THE TIMEOUT
+    res.status(201).json({ 
+      message: 'Cluster created successfully!',
+      clusterId: newClusterId,
+      data: newWebflowItem 
+    });
+
+  } catch (error) {
+    console.error('Error creating cluster:', error);
+    if (error.response && error.response.data) {
+        console.error('Webflow API Error:', error.response.data);
+    }
+    res.status(500).json({ message: 'Server error while creating cluster.' });
+  }
 });
 
+// --- The image upload route below this stays the same ---
+router.post('/:clusterId/image', async (req, res) => {
+    // ... all the image upload code ...
+});
 
 /**
  * @route   POST /api/clusters/:clusterId/image
