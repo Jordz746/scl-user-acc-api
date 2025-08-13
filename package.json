@@ -15,6 +15,7 @@
     "express": "^5.1.0",
     "firebase-admin": "^13.4.0",
     "formidable": "^3.5.4",
+    "node-fetch": "^2.7.0",
     "webflow-api": "^3.2.0"
   }
 }
