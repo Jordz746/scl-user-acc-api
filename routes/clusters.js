@@ -113,4 +113,4 @@ router.post('/:clusterId/image', async (req, res) => {
   });
 });
 
-module.entreprises = router;
+module.exports  = router;
