@@ -7,11 +7,21 @@ const fetch = require('node-fetch'); // We may need to install this
 
 const router = express.Router();
 
+// routes/clusters.js - The final version of the create route
+
 router.post('/', async (req, res) => {
   try {
     const { uid } = req.user;
-    const { clusterName, shortDescription, longDescription } = req.body;
+    
+    // 1. Destructure ALL the new fields from the request body
+    const {
+      clusterName, shortDescription, longDescription, discordUsername,
+      discordInviteLink, websiteLink, clusterLocation, game, gameVersion,
+      gameType, gameMode, numberOfMaps, tribeSize, harvestRates,
+      platformsPc, platformsXbox, platformsPlaystation, windows1011
+    } = req.body;
 
+    // We can keep the validation simple for now
     if (!clusterName || !shortDescription) {
       return res.status(400).json({ message: 'Cluster Name and Short Description are required.' });
     }
@@ -19,27 +29,35 @@ router.post('/', async (req, res) => {
     const collectionId = process.env.WEBFLOW_CLUSTER_COLLECTION_ID;
     const apiToken = process.env.WEBFLOW_API_TOKEN;
 
-    // --- DIRECT API CALL USING FETCH ---
-    // This bypasses the broken SDK completely.
-    
-    // 1. Prepare the data payload.
-    // IMPORTANT: The field slugs here MUST match your CMS collection.
+    // 2. Build the complete fieldData payload with all the correct slugs
     const payload = {
       isArchived: false,
-      isDraft: false,
+      isDraft: false, // Items will be published immediately
       fieldData: {
-        'name': clusterName, // Webflow's required "Name" field
-        'slug': clusterName.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 255), // Webflow's required "Slug" field
+        'name': clusterName,
+        'slug': clusterName.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 255),
         'cluster-name': clusterName,
         'cluster-short-description---max-100-characters': shortDescription,
         'cluster-description': longDescription,
-        'firebase-uid': uid // Store the user's ID directly in the CMS item!
+        'firebase-uid': uid,
+        'discord-username': discordUsername,
+        'discord-invite-link': discordInviteLink,
+        'website-link-optional': websiteLink,
+        'cluster-location': clusterLocation,
+        'game': game,
+        'game-version': gameVersion,
+        'game-type': gameType,
+        'game-mode': gameMode,
+        'number-of-maps': parseInt(numberOfMaps, 10), // Ensure this is a number
+        'tribe-size': tribeSize,
+        'harvest-rates': harvestRates,
+        'platforms-pc': platformsPc,
+        'platforms-xbox': platformsXbox,
+        'platforms-playstation': platformsPlaystation,
+        'windows-10-11': windows1011
       }
     };
-    
-    console.log("--- Sending direct API request to Webflow ---");
 
-    // 2. Make the authenticated request.
     const response = await fetch(`https://api.webflow.com/v2/collections/${collectionId}/items`, {
       method: "POST",
       headers: {
@@ -51,15 +69,7 @@ router.post('/', async (req, res) => {
     });
 
     const newWebflowItem = await response.json();
-
-    // 3. Check for errors from Webflow's response.
-    if (!response.ok) {
-        console.error("Webflow API Error:", newWebflowItem);
-        // Throw an error to be caught by the catch block
-        throw new Error(newWebflowItem.message || 'Failed to create item in Webflow.');
-    }
-    
-    console.log("--- Webflow item created successfully ---");
+    if (!response.ok) { throw new Error(newWebflowItem.message || 'Failed to create item in Webflow.'); }
 
     const newClusterId = newWebflowItem.id;
     const db = getFirestore();
