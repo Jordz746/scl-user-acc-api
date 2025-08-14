@@ -69,8 +69,17 @@ router.post('/', async (req, res) => {
     });
 
     const newWebflowItem = await response.json();
-    if (!response.ok) { throw new Error(newWebflowItem.message || 'Failed to create item in Webflow.'); }
-
+          if (!response.ok) {
+        // This will log the detailed error response from Webflow
+        console.error("--- Webflow API Validation Error ---");
+        console.error("Status:", response.status, response.statusText);
+        console.error("Body:", newWebflowItem);
+        // We will pass the specific Webflow error message back to the frontend
+        const errorMessage = newWebflowItem.message || 'Failed to create item in Webflow.';
+        const errorDetails = newWebflowItem.details ? JSON.stringify(newWebflowItem.details) : '';
+        throw new Error(`${errorMessage} ${errorDetails}`);
+    }
+    
     const newClusterId = newWebflowItem.id;
     const db = getFirestore();
     const userRef = db.collection('users').doc(uid);
