@@ -38,7 +38,7 @@ router.post('/', async (req, res) => {
         'slug': clusterName.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 255),
         'cluster-name': clusterName,
         'cluster-short-description---max-100-characters': shortDescription,
-        'cluster-description': longDescription,
+        'cluster-long-description---max-320-charcters': longDescription,
         'firebase-uid': uid,
         'discord-username': discordUsername,
         'discord-invite-link': discordInviteLink,
