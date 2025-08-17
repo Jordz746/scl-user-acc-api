@@ -3,22 +3,18 @@
 const express = require('express');
 const { FieldValue } = require('firebase-admin/firestore');
 const { getFirestore } = require('firebase-admin/firestore');
-const fetch = require('node-fetch');
 const { Formidable } = require('formidable');
 const fs = require('fs');
 const md5File = require('md5-file');
 const FormData = require('form-data');
-const axios = require('axios'); 
+const axios = require('axios'); // Our reliable HTTP client
 
 const router = express.Router();
 
-// routes/clusters.js - The final version of the create route
-
+// --- CREATE A NEW CLUSTER (USING AXIOS) ---
 router.post('/', async (req, res) => {
   try {
     const { uid } = req.user;
-    
-    // 1. Destructure ALL the new fields from the request body
     const {
       clusterName, shortDescription, longDescription, discordUsername,
       discordInviteLink, websiteLink, clusterLocation, game, gameVersion,
@@ -26,25 +22,22 @@ router.post('/', async (req, res) => {
       platformsPc, platformsXbox, platformsPlaystation, windows1011
     } = req.body;
 
-    // We can keep the validation simple for now
-    if (!clusterName || !shortDescription) {
-      return res.status(400).json({ message: 'Cluster Name and Short Description are required.' });
+    if (!clusterName) {
+      return res.status(400).json({ message: 'Cluster Name is required.' });
     }
 
     const collectionId = process.env.WEBFLOW_CLUSTER_COLLECTION_ID;
     const apiToken = process.env.WEBFLOW_API_TOKEN;
-
-    // 2. Build the complete fieldData payload with all the correct slugs
+    
     const payload = {
-      isArchived: false,
-      isDraft: false, // Items will be published immediately
+      isArchived: false, isDraft: false,
       fieldData: {
         'name': clusterName,
         'slug': clusterName.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 255),
+        'firebase-uid': uid,
         'cluster-name': clusterName,
         'cluster-short-description---max-100-characters': shortDescription,
         'cluster-description': longDescription,
-        'firebase-uid': uid,
         'discord-username': discordUsername,
         'discord-invite-link': discordInviteLink,
         'website-link-optional': websiteLink,
@@ -53,7 +46,7 @@ router.post('/', async (req, res) => {
         'game-version': gameVersion,
         'game-type': gameType,
         'game-mode': gameMode,
-        'number-of-maps': parseInt(numberOfMaps, 10), // Ensure this is a number
+        'number-of-maps': parseInt(numberOfMaps, 10),
         'tribe-size': tribeSize,
         'harvest-rates': harvestRates,
         'platforms-pc': platformsPc,
@@ -62,29 +55,14 @@ router.post('/', async (req, res) => {
         'windows-10-11': windows1011
       }
     };
-
-    const response = await fetch(`https://api.webflow.com/v2/collections/${collectionId}/items`, {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${apiToken}`,
-        "accept": "application/json",
-        "content-type": "application/json"
-      },
-      body: JSON.stringify(payload)
-    });
-
-    const newWebflowItem = await response.json();
-          if (!response.ok) {
-        // This will log the detailed error response from Webflow
-        console.error("--- Webflow API Validation Error ---");
-        console.error("Status:", response.status, response.statusText);
-        console.error("Body:", newWebflowItem);
-        // We will pass the specific Webflow error message back to the frontend
-        const errorMessage = newWebflowItem.message || 'Failed to create item in Webflow.';
-        const errorDetails = newWebflowItem.details ? JSON.stringify(newWebflowItem.details) : '';
-        throw new Error(`${errorMessage} ${errorDetails}`);
-    }
     
+    const response = await axios.post(
+        `https://api.webflow.com/v2/collections/${collectionId}/items`,
+        payload,
+        { headers: { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json", "accept-version": "1.0.0" } }
+    );
+    const newWebflowItem = response.data;
+
     const newClusterId = newWebflowItem.id;
     const db = getFirestore();
     const userRef = db.collection('users').doc(uid);
@@ -95,26 +73,22 @@ router.post('/', async (req, res) => {
       clusterId: newClusterId,
       data: newWebflowItem
     });
-
   } catch (error) {
-    console.error('Error creating cluster:', error.message);
-    res.status(500).json({ message: 'Server error while creating cluster.', error: error.message });
+    console.error('Error creating cluster:', error.response ? error.response.data : error.message);
+    res.status(500).json({ message: 'Server error while creating cluster.' });
   }
 });
 
-// routes/clusters.js
 
-// ... (The router.post('/', ...) function stays the same) ...
-
-// --- THE FINAL, ROBUST IMAGE UPLOAD ROUTE ---
+// --- UPLOAD AN IMAGE (WITH SUBFOLDER LOGIC) ---
 router.post('/:clusterId/image', async (req, res) => {
     const { clusterId } = req.params;
-    const { type } = req.query; 
+    const { type } = req.query;
     const { uid } = req.user;
     const apiToken = process.env.WEBFLOW_API_TOKEN;
     const siteId = process.env.WEBFLOW_SITE_ID;
+    const parentAssetFolderId = process.env.WEBFLOW_PARENT_ASSET_FOLDER_ID;
 
-    // Security checks...
     const db = getFirestore();
     const userDoc = await db.collection('users').doc(uid).get();
     if (!userDoc.exists || !userDoc.data().clusters.includes(clusterId)) {
@@ -128,36 +102,45 @@ router.post('/:clusterId/image', async (req, res) => {
         if (!imageFile) { return res.status(400).json({ message: 'No image file uploaded' }); }
 
         try {
-            // --- STEP A: REGISTER THE ASSET (using axios) ---
+            // STEP 1: Create a dedicated subfolder for this cluster
+            let subfolderId = null;
+            try {
+                const folderResponse = await axios.post(
+                    `https://api.webflow.com/v2/sites/${siteId}/asset_folders`,
+                    { displayName: clusterId, parentFolder: parentAssetFolderId },
+                    { headers: { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" } }
+                );
+                subfolderId = folderResponse.data.id;
+                console.log(`Step 1: Successfully created new subfolder with ID: ${subfolderId}`);
+            } catch(folderError) {
+                console.log("Could not create subfolder, it may already exist. Will fall back to parent folder.");
+                subfolderId = parentAssetFolderId;
+            }
+
+            // STEP 2: Register the asset inside the target folder
             const fileHash = await md5File(imageFile.filepath);
-            
             const registerResult = await axios.post(
                 `https://api.webflow.com/v2/sites/${siteId}/assets`,
-                { fileName: imageFile.originalFilename, fileHash: fileHash },
+                { fileName: imageFile.originalFilename, fileHash: fileHash, parentFolder: subfolderId },
                 { headers: { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" } }
             );
             const assetData = registerResult.data;
 
-            // --- STEP B: UPLOAD THE FILE TO S3 (using axios) ---
+            // STEP 3: Upload the file
             const uploadUrl = assetData.uploadUrl;
             const fileStream = fs.createReadStream(imageFile.filepath);
-            
             const formData = new FormData();
             const uploadFields = assetData.uploadDetails || assetData.fields;
             Object.keys(uploadFields).forEach(key => {
                 formData.append(key, uploadFields[key]);
             });
             formData.append('file', fileStream);
-
-            const uploadResult = await axios.post(uploadUrl, formData, {
-                headers: formData.getHeaders()
-            });
-
+            const uploadResult = await axios.post(uploadUrl, formData, { headers: formData.getHeaders() });
             if (uploadResult.status !== 201 && uploadResult.status !== 204) {
                 throw new Error(`File upload failed with status: ${uploadResult.status}`);
             }
 
-            // --- STEP C: UPDATE THE CMS ITEM (using axios) ---
+            // STEP 4: Update the CMS Item
             const permanentImageUrl = assetData.hostedUrl || assetData.url;
             const fieldToUpdate = {
                 'logo-1-1': '1-1-cluster-logo-image-link',
@@ -170,7 +153,7 @@ router.post('/:clusterId/image', async (req, res) => {
             const patchResult = await axios.patch(
                 `https://api.webflow.com/v2/collections/${process.env.WEBFLOW_CLUSTER_COLLECTION_ID}/items/${clusterId}`,
                 payload,
-                { headers: { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" } }
+                { headers: { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json", "accept-version": "1.0.0" } }
             );
 
             res.status(200).json({
