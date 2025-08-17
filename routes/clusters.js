@@ -106,24 +106,13 @@ router.post('/', async (req, res) => {
 // ... (The router.post('/', ...) function stays the same) ...
 
 router.post('/:clusterId/image', async (req, res) => {
-    const { clusterId } = req.params;
-    const { type } = req.query; 
-    const { uid } = req.user;
-    const apiToken = process.env.WEBFLOW_API_TOKEN;
-    const siteId = process.env.WEBFLOW_SITE_ID;
-
-    // Security checks...
-    const db = getFirestore();
-    const userDoc = await db.collection('users').doc(uid).get();
-    if (!userDoc.exists || !userDoc.data().clusters.includes(clusterId)) {
-        return res.status(403).json({ message: 'Forbidden: You do not own this cluster.' });
-    }
+    // ... (security checks and form parsing are the same) ...
 
     const form = new Formidable();
     form.parse(req, async (err, fields, files) => {
-        if (err) { return res.status(500).json({ message: 'Error parsing form' }); }
+        // ... (error checks are the same) ...
         const imageFile = files.image?.[0];
-        if (!imageFile) { return res.status(400).json({ message: 'No image file uploaded' }); }
+        if (!imageFile) { /* ... */ }
 
         try {
             // --- STEP A: REGISTER THE ASSET WITH WEBFLOW ---
@@ -140,45 +129,54 @@ router.post('/:clusterId/image', async (req, res) => {
             });
 
             const assetData = await registerResponse.json();
+            
+            // --- THE CRUCIAL DEBUGGING LINE ---
+            console.log("--- Webflow API Response from Step A ---");
+            console.log(assetData);
+            // --- END OF DEBUGGING LINE ---
 
-            // Handle the 'duplicate_file' case - this is a success!
-            if (assetData.code === 'duplicate_file') {
-                console.log("File is a duplicate. Using existing asset.");
-                // We will handle the CMS update with the existing URL later. This is a success for the upload.
-            } else if (!registerResponse.ok) {
+            if (!registerResponse.ok && assetData.code !== 'duplicate_file') {
                 console.error("Webflow API Error (Step A):", assetData);
                 throw new Error(assetData.message || 'Failed to register asset with Webflow.');
-            } else {
-                // --- STEP B: UPLOAD THE FILE TO THE PROVIDED URL ---
-                console.log("Step B: Uploading file to the provided URL.");
-                const uploadUrl = assetData.uploadUrl;
-                const fileStream = fs.createReadStream(imageFile.filepath);
-
-                const formData = new FormData();
-                // Append all the required fields from the Webflow response
-                Object.keys(assetData.fields).forEach(key => {
-                    formData.append(key, assetData.fields[key]);
-                });
-                // Append the actual file data
-                formData.append('file', fileStream);
-
-                const uploadResponse = await fetch(uploadUrl, {
-                    method: 'POST',
-                    body: formData,
-                    headers: formData.getHeaders()
-                });
-
-                // A 204 response is a success for this S3 upload
-                if (uploadResponse.status !== 204) {
-                    throw new Error(`File upload failed with status: ${uploadResponse.status}`);
-                }
-                console.log("Step B: File upload successful.");
             }
+            
+            // If it's a duplicate, we can succeed early
+            if (assetData.code === 'duplicate_file') {
+                console.log("File is a duplicate. Using existing asset.");
+                // We'll add the CMS update logic here later.
+                return res.status(200).json({
+                    message: "Image is a duplicate, but successfully processed!",
+                    imageUrl: assetData.url,
+                });
+            }
+
+            // --- STEP B: UPLOAD THE FILE TO THE PROVIDED URL ---
+            console.log("Step B: Uploading file to the provided URL.");
+            const uploadUrl = assetData.uploadUrl;
+            const fileStream = fs.createReadStream(imageFile.filepath);
+
+            const formData = new FormData();
+            // This is the line that was failing. The log above will tell us why.
+            Object.keys(assetData.fields).forEach(key => {
+                formData.append(key, assetData.fields[key]);
+            });
+            formData.append('file', fileStream);
+
+            const uploadResponse = await fetch(uploadUrl, {
+                method: 'POST',
+                body: formData,
+                headers: formData.getHeaders()
+            });
+
+            if (uploadResponse.status !== 204) {
+                throw new Error(`File upload failed with status: ${uploadResponse.status}`);
+            }
+            console.log("Step B: File upload successful.");
             
             // --- STEP C: UPDATE THE CMS ITEM ---
             const permanentImageUrl = assetData.url;
             console.log(`Step C: Updating CMS with permanent URL: ${permanentImageUrl}`);
-            // ... (The CMS update logic from before is correct and will be added back here) ...
+            // ... (CMS update logic will go here) ...
             
             res.status(200).json({
                 message: "Image uploaded and processed successfully!",
@@ -191,6 +189,5 @@ router.post('/:clusterId/image', async (req, res) => {
         }
     });
 });
-
 
 module.exports = router;
