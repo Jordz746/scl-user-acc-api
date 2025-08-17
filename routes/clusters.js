@@ -3,7 +3,7 @@
 const express = require('express');
 const { FieldValue } = require('firebase-admin/firestore');
 const { getFirestore } = require('firebase-admin/firestore');
-const fetch = require('node-fetch'); // We may need to install this
+const fetch = require('node-fetch');
 const { Formidable } = require('formidable');
 const fs = require('fs');
 const md5File = require('md5-file');
@@ -105,77 +105,89 @@ router.post('/', async (req, res) => {
 
 // ... (The router.post('/', ...) function stays the same) ...
 
+// --- THE FINAL, ROBUST IMAGE UPLOAD ROUTE ---
 router.post('/:clusterId/image', async (req, res) => {
-    const { clusterId, type, uid, apiToken, siteId } = { // Simplified declarations
-        clusterId: req.params.clusterId,
-        type: req.query.type,
-        uid: req.user.uid,
-        apiToken: process.env.WEBFLOW_API_TOKEN,
-        siteId: process.env.WEBFLOW_SITE_ID,
-    };
+    const { clusterId } = req.params;
+    const { type } = req.query;
+    const { uid } = req.user;
+    const apiToken = process.env.WEBFLOW_API_TOKEN;
+    const siteId = process.env.WEBFLOW_SITE_ID;
 
-    // ... (Security checks stay the same) ...
+    // Security checks...
+    const db = getFirestore();
+    const userDoc = await db.collection('users').doc(uid).get();
+    if (!userDoc.exists || !userDoc.data().clusters.includes(clusterId)) {
+        return res.status(403).json({ message: 'Forbidden: You do not own this cluster.' });
+    }
 
     const form = new Formidable();
     form.parse(req, async (err, fields, files) => {
-        if (err) { /* ... */ }
+        if (err) { return res.status(500).json({ message: 'Error parsing form' }); }
         const imageFile = files.image?.[0];
-        if (!imageFile) { /* ... */ }
+        if (!imageFile) { return res.status(400).json({ message: 'No image file uploaded' }); }
 
         try {
-            // --- STEP A: REGISTER ASSET (This part is working perfectly) ---
+            // --- STEP A: REGISTER THE ASSET ---
             const fileHash = await md5File(imageFile.filepath);
-            const registerResponse = await fetch(`https://api.webflow.com/v2/sites/${siteId}/assets`, { /* ... */ });
+            const registerResponse = await fetch(`https://api.webflow.com/v2/sites/${siteId}/assets`, {
+                method: "POST",
+                headers: { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" },
+                body: JSON.stringify({ fileName: imageFile.originalFilename, fileHash: fileHash })
+            });
             const assetData = await registerResponse.json();
-            // ... (error handling for Step A) ...
 
-            // --- STEP B: UPLOAD FILE ---
+            // --- ROBUST CHECK ---
+            // The API sends different responses. We must handle both cases.
+            const uploadFields = assetData.uploadDetails || assetData.fields;
+            if (!uploadFields) {
+                console.error("Webflow API Error: Response did not contain 'uploadDetails' or 'fields'", assetData);
+                throw new Error("Invalid response from Webflow asset registration.");
+            }
+
+            // --- STEP B: UPLOAD THE FILE ---
             const uploadUrl = assetData.uploadUrl;
             const fileStream = fs.createReadStream(imageFile.filepath);
-
             const formData = new FormData();
-            Object.keys(assetData.uploadDetails).forEach(key => {
-                formData.append(key, assetData.uploadDetails[key]);
+            Object.keys(uploadFields).forEach(key => {
+                formData.append(key, uploadFields[key]);
             });
             formData.append('file', fileStream);
 
-            // --- THIS IS THE FIX ---
-            // We manually get the length of the form data payload.
-            // This is required by AWS S3.
-            const contentLength = await new Promise((resolve, reject) => {
-                formData.getLength((err, length) => {
-                    if (err) { reject(err); return; }
-                    resolve(length);
-                });
-            });
-
-            console.log(`Step B: Uploading file to S3 with Content-Length: ${contentLength}`);
-
+            const contentLength = await formData.getLength();
             const uploadResponse = await fetch(uploadUrl, {
                 method: 'POST',
                 body: formData,
-                headers: {
-                    ...formData.getHeaders(),
-                    'Content-Length': contentLength // Manually set the header
-                }
+                headers: { ...formData.getHeaders(), 'Content-Length': contentLength }
             });
-            
-            // A 201 response is a success for this S3 upload
-            if (uploadResponse.status !== 201) {
-                // Let's get more details on failure
-                const errorBody = await uploadResponse.text();
-                console.error("S3 Upload Error Body:", errorBody);
+
+            if (uploadResponse.status !== 201 && uploadResponse.status !== 204) {
+                 const errorBody = await uploadResponse.text();
+                 console.error("S3 Upload Error Body:", errorBody);
                 throw new Error(`File upload failed with status: ${uploadResponse.status}`);
             }
-            console.log("Step B: File upload successful.");
+
+            // --- STEP C: UPDATE THE CMS ITEM ---
+            const permanentImageUrl = assetData.hostedUrl || assetData.url;
+            const fieldToUpdate = {
+                'logo-1-1': '1-1-cluster-logo-image-link',
+                'banner-16-9': '16-9-banner-image-link',
+                'banner-9-16': '9-16-banner-image-link'
+            }[type];
+            if (!fieldToUpdate) return res.status(400).json({ message: 'Invalid image type.' });
             
-            // --- STEP C: UPDATE CMS ---
-            const permanentImageUrl = assetData.hostedUrl;
-            // ... (CMS update logic will go here) ...
-            
+            const payload = { isDraft: false, isArchived: false, fieldData: { [fieldToUpdate]: permanentImageUrl } };
+            const patchResponse = await fetch(`https://api.webflow.com/v2/collections/${process.env.WEBFLOW_CLUSTER_COLLECTION_ID}/items/${clusterId}`, {
+                method: "PATCH",
+                headers: { "Authorization": `Bearer ${apiToken}`, "accept": "application/json", "content-type": "application/json" },
+                body: JSON.stringify(payload)
+            });
+            const updatedItem = await patchResponse.json();
+            if (!patchResponse.ok) throw new Error('Failed to update CMS item with image URL.');
+
             res.status(200).json({
-                message: "Image uploaded and processed successfully!",
+                message: "Image uploaded and cluster updated successfully!",
                 imageUrl: permanentImageUrl,
+                updatedItem: updatedItem
             });
 
         } catch (error) {
