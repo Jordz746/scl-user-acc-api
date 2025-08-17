@@ -118,56 +118,59 @@ router.post('/:clusterId/image', async (req, res) => {
 
     const form = new Formidable();
     form.parse(req, async (err, fields, files) => {
-        // ... (Error checks are the same) ...
+        if (err) { /* ... */ }
         const imageFile = files.image?.[0];
         if (!imageFile) { /* ... */ }
 
         try {
-            // --- STEP A: REGISTER THE ASSET WITH WEBFLOW ---
+            // --- STEP A: REGISTER ASSET (This part is working perfectly) ---
             const fileHash = await md5File(imageFile.filepath);
-            console.log(`Step A: Registering asset with fileName: ${imageFile.originalFilename} and hash: ${fileHash}`);
-
-            const registerResponse = await fetch(`https://api.webflow.com/v2/sites/${siteId}/assets`, {
-                method: "POST",
-                headers: { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    fileName: imageFile.originalFilename,
-                    fileHash: fileHash
-                })
-            });
-
+            const registerResponse = await fetch(`https://api.webflow.com/v2/sites/${siteId}/assets`, { /* ... */ });
             const assetData = await registerResponse.json();
-            if (!registerResponse.ok && assetData.code !== 'duplicate_file') {
-                throw new Error(assetData.message || 'Failed to register asset.');
-            }
-            
-            // --- STEP B: UPLOAD THE FILE TO THE PROVIDED URL ---
-            console.log("Step B: Uploading file to the provided URL.");
+            // ... (error handling for Step A) ...
+
+            // --- STEP B: UPLOAD FILE ---
             const uploadUrl = assetData.uploadUrl;
             const fileStream = fs.createReadStream(imageFile.filepath);
 
             const formData = new FormData();
-            // --- THIS IS THE FIX ---
-            // We use the 'uploadDetails' object from the API response
             Object.keys(assetData.uploadDetails).forEach(key => {
                 formData.append(key, assetData.uploadDetails[key]);
             });
             formData.append('file', fileStream);
 
+            // --- THIS IS THE FIX ---
+            // We manually get the length of the form data payload.
+            // This is required by AWS S3.
+            const contentLength = await new Promise((resolve, reject) => {
+                formData.getLength((err, length) => {
+                    if (err) { reject(err); return; }
+                    resolve(length);
+                });
+            });
+
+            console.log(`Step B: Uploading file to S3 with Content-Length: ${contentLength}`);
+
             const uploadResponse = await fetch(uploadUrl, {
                 method: 'POST',
                 body: formData,
-                headers: formData.getHeaders()
+                headers: {
+                    ...formData.getHeaders(),
+                    'Content-Length': contentLength // Manually set the header
+                }
             });
-
+            
             // A 201 response is a success for this S3 upload
             if (uploadResponse.status !== 201) {
+                // Let's get more details on failure
+                const errorBody = await uploadResponse.text();
+                console.error("S3 Upload Error Body:", errorBody);
                 throw new Error(`File upload failed with status: ${uploadResponse.status}`);
             }
             console.log("Step B: File upload successful.");
             
-            // --- STEP C: UPDATE THE CMS ITEM ---
-            const permanentImageUrl = assetData.hostedUrl; // Using hostedUrl for the CDN link
+            // --- STEP C: UPDATE CMS ---
+            const permanentImageUrl = assetData.hostedUrl;
             // ... (CMS update logic will go here) ...
             
             res.status(200).json({
