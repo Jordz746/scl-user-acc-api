@@ -8,6 +8,7 @@ const { Formidable } = require('formidable');
 const fs = require('fs');
 const md5File = require('md5-file');
 const FormData = require('form-data');
+const axios = require('axios'); 
 
 const router = express.Router();
 
@@ -108,7 +109,7 @@ router.post('/', async (req, res) => {
 // --- THE FINAL, ROBUST IMAGE UPLOAD ROUTE ---
 router.post('/:clusterId/image', async (req, res) => {
     const { clusterId } = req.params;
-    const { type } = req.query;
+    const { type } = req.query; 
     const { uid } = req.user;
     const apiToken = process.env.WEBFLOW_API_TOKEN;
     const siteId = process.env.WEBFLOW_SITE_ID;
@@ -127,46 +128,36 @@ router.post('/:clusterId/image', async (req, res) => {
         if (!imageFile) { return res.status(400).json({ message: 'No image file uploaded' }); }
 
         try {
-            // --- STEP A: REGISTER THE ASSET ---
+            // --- STEP A: REGISTER THE ASSET (using axios) ---
             const fileHash = await md5File(imageFile.filepath);
-            const registerResponse = await fetch(`https://api.webflow.com/v2/sites/${siteId}/assets`, {
-                method: "POST",
-                headers: { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" },
-                body: JSON.stringify({ fileName: imageFile.originalFilename, fileHash: fileHash })
-            });
-            const assetData = await registerResponse.json();
+            
+            const registerResult = await axios.post(
+                `https://api.webflow.com/v2/sites/${siteId}/assets`,
+                { fileName: imageFile.originalFilename, fileHash: fileHash },
+                { headers: { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" } }
+            );
+            const assetData = registerResult.data;
 
-            // --- ROBUST CHECK ---
-            // The API sends different responses. We must handle both cases.
-            const uploadFields = assetData.uploadDetails || assetData.fields;
-            if (!uploadFields) {
-                console.error("Webflow API Error: Response did not contain 'uploadDetails' or 'fields'", assetData);
-                throw new Error("Invalid response from Webflow asset registration.");
-            }
-
-            // --- STEP B: UPLOAD THE FILE ---
+            // --- STEP B: UPLOAD THE FILE TO S3 (using axios) ---
             const uploadUrl = assetData.uploadUrl;
             const fileStream = fs.createReadStream(imageFile.filepath);
+            
             const formData = new FormData();
+            const uploadFields = assetData.uploadDetails || assetData.fields;
             Object.keys(uploadFields).forEach(key => {
                 formData.append(key, uploadFields[key]);
             });
             formData.append('file', fileStream);
 
-            const contentLength = await formData.getLength();
-            const uploadResponse = await fetch(uploadUrl, {
-                method: 'POST',
-                body: formData,
-                headers: { ...formData.getHeaders(), 'Content-Length': contentLength }
+            const uploadResult = await axios.post(uploadUrl, formData, {
+                headers: formData.getHeaders()
             });
 
-            if (uploadResponse.status !== 201 && uploadResponse.status !== 204) {
-                 const errorBody = await uploadResponse.text();
-                 console.error("S3 Upload Error Body:", errorBody);
-                throw new Error(`File upload failed with status: ${uploadResponse.status}`);
+            if (uploadResult.status !== 201 && uploadResult.status !== 204) {
+                throw new Error(`File upload failed with status: ${uploadResult.status}`);
             }
 
-            // --- STEP C: UPDATE THE CMS ITEM ---
+            // --- STEP C: UPDATE THE CMS ITEM (using axios) ---
             const permanentImageUrl = assetData.hostedUrl || assetData.url;
             const fieldToUpdate = {
                 'logo-1-1': '1-1-cluster-logo-image-link',
@@ -176,23 +167,21 @@ router.post('/:clusterId/image', async (req, res) => {
             if (!fieldToUpdate) return res.status(400).json({ message: 'Invalid image type.' });
             
             const payload = { isDraft: false, isArchived: false, fieldData: { [fieldToUpdate]: permanentImageUrl } };
-            const patchResponse = await fetch(`https://api.webflow.com/v2/collections/${process.env.WEBFLOW_CLUSTER_COLLECTION_ID}/items/${clusterId}`, {
-                method: "PATCH",
-                headers: { "Authorization": `Bearer ${apiToken}`, "accept": "application/json", "content-type": "application/json" },
-                body: JSON.stringify(payload)
-            });
-            const updatedItem = await patchResponse.json();
-            if (!patchResponse.ok) throw new Error('Failed to update CMS item with image URL.');
+            const patchResult = await axios.patch(
+                `https://api.webflow.com/v2/collections/${process.env.WEBFLOW_CLUSTER_COLLECTION_ID}/items/${clusterId}`,
+                payload,
+                { headers: { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" } }
+            );
 
             res.status(200).json({
                 message: "Image uploaded and cluster updated successfully!",
                 imageUrl: permanentImageUrl,
-                updatedItem: updatedItem
+                updatedItem: patchResult.data
             });
 
         } catch (error) {
-            console.error('Error during image upload process:', error.message);
-            res.status(500).json({ message: 'Server error during image upload.', error: error.message });
+            console.error('Error during image upload process:', error.response ? error.response.data : error.message);
+            res.status(500).json({ message: 'Server error during image upload.' });
         }
     });
 });
