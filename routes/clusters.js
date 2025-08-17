@@ -4,7 +4,7 @@ const express = require('express');
 const { FieldValue } = require('firebase-admin/firestore');
 const { getFirestore } = require('firebase-admin/firestore');
 const fetch = require('node-fetch'); // We may need to install this
-
+const { Formidable } = require('formidable');
 const router = express.Router();
 
 // routes/clusters.js - The final version of the create route
