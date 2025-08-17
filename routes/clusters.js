@@ -6,7 +6,7 @@ const { getFirestore } = require('firebase-admin/firestore');
 const fetch = require('node-fetch'); // We may need to install this
 const { Formidable } = require('formidable');
 const fs = require('fs');
-const md5File = require('md5-file');
+
 const router = express.Router();
 
 // routes/clusters.js - The final version of the create route
@@ -110,7 +110,12 @@ router.post('/:clusterId/image', async (req, res) => {
     const apiToken = process.env.WEBFLOW_API_TOKEN;
     const siteId = process.env.WEBFLOW_SITE_ID;
 
-    // ... (Security checks are correct and stay the same) ...
+    // --- Security checks (stay the same) ---
+    const db = getFirestore();
+    const userDoc = await db.collection('users').doc(uid).get();
+    if (!userDoc.exists || !userDoc.data().clusters.includes(clusterId)) {
+        return res.status(403).json({ message: 'Forbidden: You do not own this cluster.' });
+    }
 
     const form = new Formidable();
     form.parse(req, async (err, fields, files) => {
@@ -119,31 +124,22 @@ router.post('/:clusterId/image', async (req, res) => {
         if (!imageFile) { return res.status(400).json({ message: 'No image file uploaded' }); }
 
         try {
-            // --- The Correct Node.js FormData Workflow ---
-            
-            // 1. Create a file stream from the temporarily uploaded file path
-            const fileStream = fs.createReadStream(imageFile.filepath);
+            // --- Direct Upload using a Buffer ---
+            // 1. Read the entire file into memory. This is safe for small files.
+            const fileBuffer = fs.readFileSync(imageFile.filepath);
 
-            // 2. Create a new FormData instance
-            const formData = new FormData();
-            
-            // 3. Append the file stream with the correct syntax
-            // The third argument is an object for metadata like the filename.
-            formData.append('file', fileStream, {
-                filename: imageFile.originalFilename,
-                contentType: imageFile.mimetype,
-            });
+            console.log("Attempting direct asset upload using a raw buffer...");
 
-            console.log("Attempting direct asset upload with correct FormData syntax...");
-
-            // 4. Make the request to Webflow
-            const response = await fetch(`https://api.webflow.com/v2/sites/${siteId}/assets`, {
+            // 2. Make the authenticated request to Webflow
+            const response = await fetch(`https://api.webflow.com/v2/sites/${siteId}/assets/direct_upload`, {
                 method: "POST",
                 headers: {
                     "Authorization": `Bearer ${apiToken}`,
-                    ...formData.getHeaders() // The library correctly sets the 'Content-Type'
+                    "Content-Type": imageFile.mimetype,
+                    "Content-Length": imageFile.size,
+                    "X-Webflow-FileName": imageFile.originalFilename
                 },
-                body: formData
+                body: fileBuffer // Send the raw file buffer as the body
             });
 
             const asset = await response.json();
@@ -154,7 +150,7 @@ router.post('/:clusterId/image', async (req, res) => {
 
             console.log("Asset uploaded successfully:", asset.url);
             
-            // --- 5. Now, update the CMS item ---
+            // --- 3. Now, update the CMS item ---
             const permanentImageUrl = asset.url;
             const fieldToUpdate = {
                 'logo-1-1': '1-1-cluster-logo-image-link',
@@ -175,7 +171,6 @@ router.post('/:clusterId/image', async (req, res) => {
             });
             const updatedItem = await patchResponse.json();
             if (!patchResponse.ok) throw new Error('Failed to update CMS item with image URL.');
-
 
             res.status(200).json({
                 message: "Image uploaded and cluster updated successfully!",
