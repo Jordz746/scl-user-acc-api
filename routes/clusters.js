@@ -110,7 +110,7 @@ router.post('/:clusterId/image', async (req, res) => {
     const apiToken = process.env.WEBFLOW_API_TOKEN;
     const siteId = process.env.WEBFLOW_SITE_ID;
 
-    // ... Security checks ...
+    // ... (Security checks are correct and stay the same) ...
 
     const form = new Formidable();
     form.parse(req, async (err, fields, files) => {
@@ -119,18 +119,29 @@ router.post('/:clusterId/image', async (req, res) => {
         if (!imageFile) { return res.status(400).json({ message: 'No image file uploaded' }); }
 
         try {
-            // --- The Simpler, Direct Upload Workflow ---
+            // --- The Correct Node.js FormData Workflow ---
+            
+            // 1. Create a file stream from the temporarily uploaded file path
             const fileStream = fs.createReadStream(imageFile.filepath);
+
+            // 2. Create a new FormData instance
             const formData = new FormData();
-            formData.append('file', fileStream, imageFile.originalFilename);
+            
+            // 3. Append the file stream with the correct syntax
+            // The third argument is an object for metadata like the filename.
+            formData.append('file', fileStream, {
+                filename: imageFile.originalFilename,
+                contentType: imageFile.mimetype,
+            });
 
-            console.log("Attempting direct asset upload...");
+            console.log("Attempting direct asset upload with correct FormData syntax...");
 
+            // 4. Make the request to Webflow
             const response = await fetch(`https://api.webflow.com/v2/sites/${siteId}/assets`, {
                 method: "POST",
                 headers: {
                     "Authorization": `Bearer ${apiToken}`,
-                    ...formData.getHeaders() // The FormData library creates the correct headers
+                    ...formData.getHeaders() // The library correctly sets the 'Content-Type'
                 },
                 body: formData
             });
@@ -143,12 +154,33 @@ router.post('/:clusterId/image', async (req, res) => {
 
             console.log("Asset uploaded successfully:", asset.url);
             
-            // --- Now, update the CMS item ---
-            // ... (This logic will be added next) ...
+            // --- 5. Now, update the CMS item ---
+            const permanentImageUrl = asset.url;
+            const fieldToUpdate = {
+                'logo-1-1': '1-1-cluster-logo-image-link',
+                'banner-16-9': '16-9-banner-image-link',
+                'banner-9-16': '9-16-banner-image-link'
+            }[type];
+            if (!fieldToUpdate) return res.status(400).json({ message: 'Invalid image type.' });
+            
+            const payload = {
+                isArchived: false, isDraft: false,
+                fieldData: { [fieldToUpdate]: permanentImageUrl }
+            };
+
+            const patchResponse = await fetch(`https://api.webflow.com/v2/collections/${process.env.WEBFLOW_CLUSTER_COLLECTION_ID}/items/${clusterId}`, {
+                method: "PATCH",
+                headers: { "Authorization": `Bearer ${apiToken}`, "accept": "application/json", "content-type": "application/json" },
+                body: JSON.stringify(payload)
+            });
+            const updatedItem = await patchResponse.json();
+            if (!patchResponse.ok) throw new Error('Failed to update CMS item with image URL.');
+
 
             res.status(200).json({
-                message: "Image uploaded successfully!",
+                message: "Image uploaded and cluster updated successfully!",
                 imageUrl: asset.url,
+                updatedItem: updatedItem
             });
 
         } catch (error) {
