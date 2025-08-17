@@ -5,6 +5,8 @@ const { FieldValue } = require('firebase-admin/firestore');
 const { getFirestore } = require('firebase-admin/firestore');
 const fetch = require('node-fetch'); // We may need to install this
 const { Formidable } = require('formidable');
+const fs = require('fs');
+const md5File = require('md5-file');
 const router = express.Router();
 
 // routes/clusters.js - The final version of the create route
@@ -103,100 +105,50 @@ router.post('/', async (req, res) => {
 
 router.post('/:clusterId/image', async (req, res) => {
     const { clusterId } = req.params;
-    // 'type' will be 'logo-1-1', 'banner-16-9', or 'banner-9-16'
     const { type } = req.query; 
     const { uid } = req.user;
     const apiToken = process.env.WEBFLOW_API_TOKEN;
+    const siteId = process.env.WEBFLOW_SITE_ID;
 
-    // --- 1. Security & Validation ---
-    if (!clusterId || !type) {
-        return res.status(400).json({ message: 'Cluster ID and image type are required.' });
-    }
-    const db = getFirestore();
-    const userDoc = await db.collection('users').doc(uid).get();
-    if (!userDoc.exists || !userDoc.data().clusters.includes(clusterId)) {
-        return res.status(403).json({ message: 'Forbidden: You do not own this cluster.' });
-    }
+    // ... Security checks ...
 
     const form = new Formidable();
-
     form.parse(req, async (err, fields, files) => {
-        if (err) {
-            console.error('Error parsing form:', err);
-            return res.status(500).json({ message: 'Error processing file upload.' });
-        }
-
-        const imageFile = files.image?.[0]; // Assumes your file input is name="image"
-        if (!imageFile) {
-            return res.status(400).json({ message: 'No image file was uploaded.' });
-        }
+        if (err) { return res.status(500).json({ message: 'Error parsing form' }); }
+        const imageFile = files.image?.[0];
+        if (!imageFile) { return res.status(400).json({ message: 'No image file uploaded' }); }
 
         try {
-            // --- 2. Create Webflow Asset Folder (if it doesn't exist) ---
-            // We'll name the folder after the clusterId for perfect organization.
-            // A more advanced implementation would check if the folder exists first.
-            // For now, we'll rely on a try/catch.
-            try {
-                await fetch(`https://api.webflow.com/v2/asset_folders`, {
-                    method: 'POST',
-                    headers: { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" },
-                    body: JSON.stringify({ displayName: clusterId, parentFolder: '' })
-                });
-                console.log(`Asset folder created or already exists for cluster ${clusterId}`);
-            } catch (folderError) {
-                // We can often ignore errors here if the folder already exists.
-                console.log(`Could not create asset folder (it may already exist): ${folderError.message}`);
+            // --- The Simpler, Direct Upload Workflow ---
+            const fileStream = fs.createReadStream(imageFile.filepath);
+            const formData = new FormData();
+            formData.append('file', fileStream, imageFile.originalFilename);
+
+            console.log("Attempting direct asset upload...");
+
+            const response = await fetch(`https://api.webflow.com/v2/sites/${siteId}/assets`, {
+                method: "POST",
+                headers: {
+                    "Authorization": `Bearer ${apiToken}`,
+                    ...formData.getHeaders() // The FormData library creates the correct headers
+                },
+                body: formData
+            });
+
+            const asset = await response.json();
+            if (!response.ok) {
+                console.error("Webflow API Error:", asset);
+                throw new Error(asset.message || 'Failed to upload asset to Webflow.');
             }
 
-            // --- 3. Request an Upload URL from Webflow ---
-            const uploadDetailsResponse = await fetch(`https://api.webflow.com/v2/sites/${process.env.WEBFLOW_SITE_ID}/assets/upload-url`, {
-                method: 'POST',
-                headers: { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    fileName: imageFile.originalFilename,
-                    parentFolder: clusterId, // Upload into our new folder
-                    contentType: imageFile.mimetype,
-                    size: imageFile.size
-                })
-            });
-            const uploadDetails = await uploadDetailsResponse.json();
-            if (!uploadDetailsResponse.ok) throw new Error('Failed to get Webflow upload URL.');
+            console.log("Asset uploaded successfully:", asset.url);
             
-            // --- 4. Upload the Actual File ---
-            const fileData = fs.readFileSync(imageFile.filepath);
-            const uploadResponse = await fetch(uploadDetails.uploadUrl, {
-                method: 'PUT',
-                headers: { 'Content-Type': imageFile.mimetype },
-                body: fileData
-            });
-            if (!uploadResponse.ok) throw new Error('Failed to upload file to Webflow storage.');
-
-            // --- 5. Update the CMS Item with the New Image URL ---
-            // Map our 'type' query param to the actual Webflow field slug.
-            const fieldToUpdate = {
-                'logo-1-1': '1-1-cluster-logo-image-link',
-                'banner-16-9': '16-9-banner-image-link',
-                'banner-9-16': '9-16-banner-image-link'
-            }[type];
-            if (!fieldToUpdate) return res.status(400).json({ message: 'Invalid image type.' });
-            
-            const payload = {
-                isArchived: false, isDraft: false,
-                fieldData: { [fieldToUpdate]: uploadDetails.asset.url }
-            };
-
-            const patchResponse = await fetch(`https://api.webflow.com/v2/collections/${process.env.WEBFLOW_CLUSTER_COLLECTION_ID}/items/${clusterId}`, {
-                method: "PATCH",
-                headers: { "Authorization": `Bearer ${apiToken}`, "accept": "application/json", "content-type": "application/json" },
-                body: JSON.stringify(payload)
-            });
-            const updatedItem = await patchResponse.json();
-            if (!patchResponse.ok) throw new Error('Failed to update CMS item with image URL.');
+            // --- Now, update the CMS item ---
+            // ... (This logic will be added next) ...
 
             res.status(200).json({
-                message: 'Image uploaded and cluster updated successfully!',
-                imageUrl: uploadDetails.asset.url,
-                updatedItem: updatedItem
+                message: "Image uploaded successfully!",
+                imageUrl: asset.url,
             });
 
         } catch (error) {

@@ -14,7 +14,9 @@
     "dotenv": "^17.2.1",
     "express": "^5.1.0",
     "firebase-admin": "^13.4.0",
+    "FormData": "^0.10.1",
     "formidable": "^3.5.4",
+    "md5-file": "^5.0.0",
     "node-fetch": "^2.7.0",
     "webflow-api": "^3.2.0"
   }
