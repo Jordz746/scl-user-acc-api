@@ -105,8 +105,21 @@ router.post('/', async (req, res) => {
 
 // ... (The router.post('/', ...) function stays the same) ...
 
-router.post('/:clusterId/image', async (req, res) => {
-    // ... (security checks and form parsing are the same) ...
+  router.post('/:clusterId/image', async (req, res) => {
+    // --- THIS IS THE FIX ---
+    const { clusterId } = req.params;
+    const { type } = req.query; 
+    const { uid } = req.user;
+    const apiToken = process.env.WEBFLOW_API_TOKEN;
+    const siteId = process.env.WEBFLOW_SITE_ID; 
+    // --- END OF FIX ---
+
+    // Security checks...
+    const db = getFirestore();
+    const userDoc = await db.collection('users').doc(uid).get();
+    if (!userDoc.exists || !userDoc.data().clusters.includes(clusterId)) {
+        return res.status(403).json({ message: 'Forbidden: You do not own this cluster.' });
+    }
 
     const form = new Formidable();
     form.parse(req, async (err, fields, files) => {
