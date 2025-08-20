@@ -169,4 +169,36 @@ router.post('/:clusterId/image', async (req, res) => {
     });
 });
 
+router.get('/:clusterId', async (req, res) => {
+    const { clusterId } = req.params;
+    const { uid } = req.user;
+    const apiToken = process.env.WEBFLOW_API_TOKEN;
+    const collectionId = process.env.WEBFLOW_CLUSTER_COLLECTION_ID;
+
+    try {
+        // Step 1: Security check - Verify this user actually owns this cluster.
+        const db = getFirestore();
+        const userDoc = await db.collection('users').doc(uid).get();
+        if (!userDoc.exists || !userDoc.data().clusters.includes(clusterId)) {
+            return res.status(403).json({ message: 'Forbidden: You do not have permission to view this cluster.' });
+        }
+
+        // Step 2: Fetch the item from Webflow using its ID.
+        const response = await axios.get(
+            `https://api.webflow.com/v2/collections/${collectionId}/items/${clusterId}`,
+            { headers: { "Authorization": `Bearer ${apiToken}`, "accept-version": "1.0.0" } }
+        );
+
+        res.status(200).json(response.data);
+
+    } catch (error) {
+        console.error(`Error fetching cluster ${clusterId}:`, error.response ? error.response.data : error.message);
+        res.status(500).json({ message: 'Server error while fetching cluster data.' });
+    }
+});
+
+
+// The IMAGE UPLOAD route is correct and stays the same.
+router.post('/:clusterId/image', async (req, res) => { /* ... your working image upload logic ... */ });
+
 module.exports = router;
