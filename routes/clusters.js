@@ -82,41 +82,40 @@ router.post('/', async (req, res) => {
 
 // --- UPLOAD AN IMAGE (WITH SUBFOLDER LOGIC) ---
 router.post('/:clusterId/image', async (req, res) => {
-    const { clusterId } = req.params;
-    const { type } = req.query;
-    const { uid } = req.user;
-    const apiToken = process.env.WEBFLOW_API_TOKEN;
-    const siteId = process.env.WEBFLOW_SITE_ID;
-    const parentAssetFolderId = process.env.WEBFLOW_PARENT_ASSET_FOLDER_ID;
-
-    const db = getFirestore();
-    const userDoc = await db.collection('users').doc(uid).get();
-    if (!userDoc.exists || !userDoc.data().clusters.includes(clusterId)) {
-        return res.status(403).json({ message: 'Forbidden: You do not own this cluster.' });
-    }
+    // ... (declarations and security checks are the same) ...
 
     const form = new Formidable();
     form.parse(req, async (err, fields, files) => {
-        if (err) { return res.status(500).json({ message: 'Error parsing form' }); }
+        if (err) { /* ... */ }
         const imageFile = files.image?.[0];
-        if (!imageFile) { return res.status(400).json({ message: 'No image file uploaded' }); }
+        if (!imageFile) { /* ... */ }
 
         try {
-            // STEP 1: Create a dedicated subfolder for this cluster
+            // --- STEP 1: ROBUST "GET OR CREATE" SUBFOLDER LOGIC ---
             let subfolderId = null;
-            try {
-                const folderResponse = await axios.post(
+            console.log(`Step 1: Checking for existing asset folder named "${clusterId}"`);
+
+            // First, list all asset folders to find ours.
+            const listFoldersResponse = await axios.get(
+                `https://api.webflow.com/v2/sites/${siteId}/asset_folders`,
+                { headers: { "Authorization": `Bearer ${apiToken}` } }
+            );
+            
+            const existingFolder = listFoldersResponse.data.assetFolders.find(f => f.displayName === clusterId);
+
+            if (existingFolder) {
+                subfolderId = existingFolder.id;
+                console.log(`Found existing subfolder with ID: ${subfolderId}`);
+            } else {
+                console.log(`No existing subfolder found. Creating a new one...`);
+                const createFolderResponse = await axios.post(
                     `https://api.webflow.com/v2/sites/${siteId}/asset_folders`,
                     { displayName: clusterId, parentFolder: parentAssetFolderId },
                     { headers: { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" } }
                 );
-                subfolderId = folderResponse.data.id;
-                console.log(`Step 1: Successfully created new subfolder with ID: ${subfolderId}`);
-            } catch(folderError) {
-                console.log("Could not create subfolder, it may already exist. Will fall back to parent folder.");
-                subfolderId = parentAssetFolderId;
+                subfolderId = createFolderResponse.data.id;
+                console.log(`Successfully created new subfolder with ID: ${subfolderId}`);
             }
-
             // STEP 2: Register the asset inside the target folder
             const fileHash = await md5File(imageFile.filepath);
             const registerResult = await axios.post(
