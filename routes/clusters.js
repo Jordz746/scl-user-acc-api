@@ -254,7 +254,51 @@ router.get('/:clusterId', async (req, res) => {
 });
 
 
-// The IMAGE UPLOAD route is correct and stays the same.
-router.post('/:clusterId/image', async (req, res) => { /* ... your working image upload logic ... */ });
+/// --- NEW: PUBLISH A SINGLE CLUSTER ---
+router.post('/:clusterId/publish', async (req, res) => {
+    const { clusterId } = req.params;
+    const { uid } = req.user;
+    const apiToken = process.env.WEBFLOW_API_TOKEN;
+    const collectionId = process.env.WEBFLOW_CLUSTER_COLLECTION_ID;
+
+    try {
+        // Step 1: Security check - Verify this user owns this cluster.
+        const db = getFirestore();
+        const userDoc = await db.collection('users').doc(uid).get();
+        if (!userDoc.exists || !userDoc.data().clusters.includes(clusterId)) {
+            return res.status(403).json({ message: 'Forbidden: You do not have permission to publish this cluster.' });
+        }
+
+        // Step 2: Fetch the item first to get its slug.
+        const itemResponse = await axios.get(
+            `https://api.webflow.com/v2/collections/${collectionId}/items/${clusterId}`,
+            { headers: { "Authorization": `Bearer ${apiToken}`, "accept-version": "1.0.0" } }
+        );
+        const clusterSlug = itemResponse.data.fieldData.slug;
+
+        // Step 3: Publish the item using the dedicated publish endpoint.
+        const publishResponse = await axios.put(
+            `https://api.webflow.com/v2/collections/${collectionId}/items/publish`,
+            { itemIds: [clusterId] }, // The API expects an array of item IDs
+            { headers: { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" } }
+        );
+
+        if (publishResponse.data.publishedCount !== 1) {
+            throw new Error('Webflow API did not confirm the item was published.');
+        }
+
+        const liveUrl = `https://sclhub.webflow.io/directory-asa/${clusterSlug}`; // Replace with your actual live URL structure
+
+        res.status(200).json({
+            message: 'Cluster published successfully!',
+            publishedUrl: liveUrl
+        });
+
+    } catch (error) {
+        console.error(`Error publishing cluster ${clusterId}:`, error.response ? error.response.data : error.message);
+        res.status(500).json({ message: 'Server error while publishing cluster.' });
+    }
+});
+
 
 module.exports = router;
