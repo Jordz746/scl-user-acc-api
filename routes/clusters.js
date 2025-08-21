@@ -255,6 +255,7 @@ router.get('/:clusterId', async (req, res) => {
 
 
 /// --- NEW: PUBLISH A SINGLE CLUSTER ---
+// --- FINAL CORRECTED VERSION: PUBLISH A SINGLE CLUSTER ITEM ---
 router.post('/:clusterId/publish', async (req, res) => {
     const { clusterId } = req.params;
     const { uid } = req.user;
@@ -262,35 +263,39 @@ router.post('/:clusterId/publish', async (req, res) => {
     const collectionId = process.env.WEBFLOW_CLUSTER_COLLECTION_ID;
 
     try {
-        // Step 1: Security check - Verify this user owns this cluster.
+        // Step 1: Security check (stays the same)
         const db = getFirestore();
         const userDoc = await db.collection('users').doc(uid).get();
         if (!userDoc.exists || !userDoc.data().clusters.includes(clusterId)) {
             return res.status(403).json({ message: 'Forbidden: You do not have permission to publish this cluster.' });
         }
 
-        // Step 2: Fetch the item first to get its slug.
+        // Step 2: Fetch the item to get its slug for the return URL.
         const itemResponse = await axios.get(
             `https://api.webflow.com/v2/collections/${collectionId}/items/${clusterId}`,
             { headers: { "Authorization": `Bearer ${apiToken}`, "accept-version": "1.0.0" } }
         );
         const clusterSlug = itemResponse.data.fieldData.slug;
 
-        // Step 3: Publish the item using the dedicated publish endpoint.
-        const publishResponse = await axios.put(
+        // Step 3: Publish the specific item using the correct POST endpoint.
+        console.log(`Step 3: Publishing item ${clusterId} in collection ${collectionId}`);
+        const publishResponse = await axios.post(
             `https://api.webflow.com/v2/collections/${collectionId}/items/publish`,
             { itemIds: [clusterId] }, // The API expects an array of item IDs
             { headers: { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" } }
         );
 
-        if (publishResponse.data.publishedCount !== 1) {
+        // The API returns 202 Accepted if the publish job starts successfully.
+        if (publishResponse.status !== 202) {
+            console.error("Webflow API did not accept the publish request.", publishResponse.data);
             throw new Error('Webflow API did not confirm the item was published.');
         }
 
-        const liveUrl = `https://sclhub.webflow.io/directory-asa/${clusterSlug}`; // Replace with your actual live URL structure
+        // Publishing is asynchronous. It can take a moment to go live.
+        const liveUrl = `https://sclhub.webflow.io/directory-asa/${clusterSlug}`; // Replace with your site's actual URL structure
 
         res.status(200).json({
-            message: 'Cluster published successfully!',
+            message: 'Publishing started! Your cluster will be live in a minute.',
             publishedUrl: liveUrl
         });
 
