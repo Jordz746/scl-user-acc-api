@@ -131,24 +131,31 @@ router.post('/:clusterId/image', async (req, res) => {
 
             const existingImageUrl = currentItemData[fieldToUpdate];
 
-            // --- STEP 2: If an image exists, find and delete its asset ---
+           
+            // --- STEP 2: If an image exists, find and delete its asset (Robust Version) ---
             if (existingImageUrl) {
                 try {
-                    console.log(`Step 2: Found existing image URL: ${existingImageUrl}. Attempting to delete asset.`);
+                    // Extract the filename from the full URL
+                    const existingFileName = existingImageUrl.split('/').pop();
+                    console.log(`Step 2: Found existing image. Filename: ${existingFileName}. Attempting to delete asset.`);
+
                     const assetsResponse = await axios.get(
                         `https://api.webflow.com/v2/sites/${siteId}/assets`,
                         { headers: { "Authorization": `Bearer ${apiToken}` } }
                     );
-                    const assetToDelete = assetsResponse.data.assets.find(asset => asset.url === existingImageUrl);
+                    
+                    // THIS IS THE ROBUST COMPARISON
+                    const assetToDelete = assetsResponse.data.assets.find(asset => asset.originalFileName === existingFileName);
 
                     if (assetToDelete) {
+                        console.log(`Found matching asset to delete with ID: ${assetToDelete.id}`);
                         await axios.delete(
                             `https://api.webflow.com/v2/assets/${assetToDelete.id}`,
                             { headers: { "Authorization": `Bearer ${apiToken}` } }
                         );
-                        console.log(`Successfully deleted existing asset with ID: ${assetToDelete.id}`);
+                        console.log(`Successfully deleted existing asset.`);
                     } else {
-                        console.log("Could not find a matching asset to delete. Proceeding with upload.");
+                        console.log("Could not find a matching asset to delete by filename. Proceeding with upload.");
                     }
                 } catch (deleteError) {
                     console.error("Could not delete existing asset, it might have been removed already. Proceeding.", deleteError.message);
