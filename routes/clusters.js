@@ -254,6 +254,7 @@ router.get('/:clusterId', async (req, res) => {
 });
 
 // --- NEW: UPDATE AN EXISTING CLUSTER ---
+// --- FINAL, CORRECTED UPDATE ROUTE ---
 router.patch('/:clusterId', async (req, res) => {
     const { clusterId } = req.params;
     const { uid } = req.user;
@@ -268,29 +269,42 @@ router.patch('/:clusterId', async (req, res) => {
             return res.status(403).json({ message: 'Forbidden: You do not have permission to edit this cluster.' });
         }
 
-        // Step 2: Construct the payload with all the data from the form
-        // We can reuse the exact same fieldData structure as our create route.
+        // Step 2: Destructure ALL fields from the request body sent by the frontend.
         const {
             clusterName, shortDescription, longDescription, discordUsername,
-            // ... include all other form fields here ...
+            discordInviteLink, websiteLink, clusterLocation, game, gameVersion,
+            gameType, gameMode, numberOfMaps, tribeSize, harvestRates,
             platformsPc, platformsXbox, platformsPlaystation, windows1011
         } = req.body;
 
+        // Step 3: Construct the complete payload for the Webflow API.
         const payload = {
             isArchived: false, isDraft: false,
             fieldData: {
-                'name': clusterName, // It's important to update the name and slug
+                'name': clusterName,
                 'slug': clusterName.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 255),
-                // Add all other fields that can be edited
                 'cluster-name': clusterName,
                 'cluster-short-description---max-100-characters': shortDescription,
                 'cluster-description': longDescription,
                 'discord-username': discordUsername,
-                // ... etc for all fields
+                'discord-invite-link': discordInviteLink,
+                'website-link-optional': websiteLink,
+                'cluster-location': clusterLocation,
+                'game': game,
+                'game-version': gameVersion,
+                'game-type': gameType,
+                'game-mode': gameMode,
+                'number-of-maps': parseInt(numberOfMaps, 10),
+                'tribe-size': tribeSize,
+                'harvest-rates': harvestRates,
+                'platforms-pc': platformsPc,
+                'platforms-xbox': platformsXbox,
+                'platforms-playstation': platformsPlaystation,
+                'windows-10-11': windows1011
             }
         };
 
-        // Step 3: Update the item using a PATCH request
+        // Step 4: Update the item using a PATCH request.
         const response = await axios.patch(
             `https://api.webflow.com/v2/collections/${collectionId}/items/${clusterId}`,
             payload,
