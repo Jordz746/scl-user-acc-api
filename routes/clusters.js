@@ -253,6 +253,62 @@ router.get('/:clusterId', async (req, res) => {
     }
 });
 
+// --- NEW: UPDATE AN EXISTING CLUSTER ---
+router.patch('/:clusterId', async (req, res) => {
+    const { clusterId } = req.params;
+    const { uid } = req.user;
+    const apiToken = process.env.WEBFLOW_API_TOKEN;
+    const collectionId = process.env.WEBFLOW_CLUSTER_COLLECTION_ID;
+
+    try {
+        // Step 1: Security check - Verify this user owns this cluster.
+        const db = getFirestore();
+        const userDoc = await db.collection('users').doc(uid).get();
+        if (!userDoc.exists || !userDoc.data().clusters.includes(clusterId)) {
+            return res.status(403).json({ message: 'Forbidden: You do not have permission to edit this cluster.' });
+        }
+
+        // Step 2: Construct the payload with all the data from the form
+        // We can reuse the exact same fieldData structure as our create route.
+        const {
+            clusterName, shortDescription, longDescription, discordUsername,
+            // ... include all other form fields here ...
+            platformsPc, platformsXbox, platformsPlaystation, windows1011
+        } = req.body;
+
+        const payload = {
+            isArchived: false, isDraft: false,
+            fieldData: {
+                'name': clusterName, // It's important to update the name and slug
+                'slug': clusterName.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 255),
+                // Add all other fields that can be edited
+                'cluster-name': clusterName,
+                'cluster-short-description---max-100-characters': shortDescription,
+                'cluster-description': longDescription,
+                'discord-username': discordUsername,
+                // ... etc for all fields
+            }
+        };
+
+        // Step 3: Update the item using a PATCH request
+        const response = await axios.patch(
+            `https://api.webflow.com/v2/collections/${collectionId}/items/${clusterId}`,
+            payload,
+            { headers: { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json", "accept-version": "1.0.0" } }
+        );
+
+        res.status(200).json({
+            message: 'Cluster updated successfully!',
+            data: response.data
+        });
+
+    } catch (error) {
+        console.error(`Error updating cluster ${clusterId}:`, error.response ? error.response.data : error.message);
+        res.status(500).json({ message: 'Server error while updating cluster.' });
+    }
+});
+
+
 
 /// --- NEW: PUBLISH A SINGLE CLUSTER ---
 // --- FINAL CORRECTED VERSION: PUBLISH A SINGLE CLUSTER ITEM ---
@@ -303,6 +359,8 @@ router.post('/:clusterId/publish', async (req, res) => {
         console.error(`Error publishing cluster ${clusterId}:`, error.response ? error.response.data : error.message);
         res.status(500).json({ message: 'Server error while publishing cluster.' });
     }
+
+
 });
 
 
