@@ -16,10 +16,10 @@ router.post('/', async (req, res) => {
   try {
     const { uid } = req.user;
     const {
-      clusterName, shortDescription, longDescription, discordUsername,
-      discordInviteLink, websiteLink, clusterLocation, game, gameVersion,
-      gameType, gameMode, numberOfMaps, tribeSize, harvestRates,
-      platformsPc, platformsXbox, platformsPlaystation, windows1011
+       clusterName, shortDescription, longDescription, discordUsername,
+            discordInviteLink, websiteLink, clusterLocation, game, gameVersion,
+            gameType, gameMode, numberOfMaps, tribeSize, harvestRates,
+            platformsPc, platformsXbox, platformsPlaystation, windows1011
     } = req.body;
 
     if (!clusterName) {
@@ -255,6 +255,7 @@ router.get('/:clusterId', async (req, res) => {
 
 // --- NEW: UPDATE AN EXISTING CLUSTER ---
 // --- FINAL, CORRECTED UPDATE ROUTE ---
+// --- FINAL, COMPLETE UPDATE ROUTE ---
 router.patch('/:clusterId', async (req, res) => {
     const { clusterId } = req.params;
     const { uid } = req.user;
@@ -262,14 +263,12 @@ router.patch('/:clusterId', async (req, res) => {
     const collectionId = process.env.WEBFLOW_CLUSTER_COLLECTION_ID;
 
     try {
-        // Step 1: Security check - Verify this user owns this cluster.
         const db = getFirestore();
         const userDoc = await db.collection('users').doc(uid).get();
         if (!userDoc.exists || !userDoc.data().clusters.includes(clusterId)) {
             return res.status(403).json({ message: 'Forbidden: You do not have permission to edit this cluster.' });
         }
 
-        // Step 2: Destructure ALL fields from the request body sent by the frontend.
         const {
             clusterName, shortDescription, longDescription, discordUsername,
             discordInviteLink, websiteLink, clusterLocation, game, gameVersion,
@@ -277,7 +276,6 @@ router.patch('/:clusterId', async (req, res) => {
             platformsPc, platformsXbox, platformsPlaystation, windows1011
         } = req.body;
 
-        // Step 3: Construct the complete payload for the Webflow API.
         const payload = {
             isArchived: false, isDraft: false,
             fieldData: {
@@ -304,7 +302,6 @@ router.patch('/:clusterId', async (req, res) => {
             }
         };
 
-        // Step 4: Update the item using a PATCH request.
         const response = await axios.patch(
             `https://api.webflow.com/v2/collections/${collectionId}/items/${clusterId}`,
             payload,
@@ -315,7 +312,6 @@ router.patch('/:clusterId', async (req, res) => {
             message: 'Cluster updated successfully!',
             data: response.data
         });
-
     } catch (error) {
         console.error(`Error updating cluster ${clusterId}:`, error.response ? error.response.data : error.message);
         res.status(500).json({ message: 'Server error while updating cluster.' });
