@@ -225,6 +225,47 @@ router.post('/:clusterId/image', async (req, res) => {
     });
 });
 
+
+// --- NEW: GET ALL CLUSTERS FOR THE LOGGED-IN USER ---
+router.get('/', async (req, res) => {
+    const { uid } = req.user;
+    const apiToken = process.env.WEBFLOW_API_TOKEN;
+    const collectionId = process.env.WEBFLOW_CLUSTER_COLLECTION_ID;
+
+    try {
+        // Step 1: Get the list of cluster IDs the user owns from Firestore.
+        const db = getFirestore();
+        const userDoc = await db.collection('users').doc(uid).get();
+
+        if (!userDoc.exists || !userDoc.data().clusters || userDoc.data().clusters.length === 0) {
+            // It's not an error if the user has no clusters yet.
+            return res.status(200).json({ items: [] });
+        }
+        const userClusterIds = userDoc.data().clusters;
+
+        // Step 2: Fetch ALL items from the Webflow collection.
+        // Note: For very large collections, you would need to handle pagination.
+        // For now, this is robust and will work for hundreds/thousands of items.
+        const response = await axios.get(
+            `https://api.webflow.com/v2/collections/${collectionId}/items`,
+            { headers: { "Authorization": `Bearer ${apiToken}` } }
+        );
+        const allItems = response.data.items;
+
+        // Step 3: Filter the full list to return only the items this user owns.
+        const userItems = allItems.filter(item => userClusterIds.includes(item.id));
+
+        res.status(200).json({ items: userItems });
+
+    } catch (error) {
+        console.error(`Error fetching clusters for user ${uid}:`, error.response ? error.response.data : error.message);
+        res.status(500).json({ message: 'Server error while fetching clusters.' });
+    }
+});
+
+
+
+
 router.get('/:clusterId', async (req, res) => {
     const { clusterId } = req.params;
     const { uid } = req.user;
