@@ -359,7 +359,48 @@ router.patch('/:clusterId', async (req, res) => {
     }
 });
 
+// --- NEW: DELETE A CLUSTER ---
+router.delete('/:clusterId', async (req, res) => {
+    const { clusterId } = req.params;
+    const { uid } = req.user;
+    const apiToken = process.env.WEBFLOW_API_TOKEN;
+    const collectionId = process.env.WEBFLOW_CLUSTER_COLLECTION_ID;
 
+    try {
+        // Step 1: Security check - Verify this user owns this cluster.
+        const db = getFirestore();
+        const userDocRef = db.collection('users').doc(uid);
+        const userDoc = await userDocRef.get();
+
+        if (!userDoc.exists || !userDoc.data().clusters.includes(clusterId)) {
+            return res.status(403).json({ message: 'Forbidden: You do not have permission to delete this cluster.' });
+        }
+
+        // Step 2: Delete the item from the Webflow CMS.
+        console.log(`Attempting to delete Webflow item: ${clusterId}`);
+        await axios.delete(
+            `https://api.webflow.com/v2/collections/${collectionId}/items/${clusterId}`,
+            { headers: { "Authorization": `Bearer ${apiToken}` } }
+        );
+        console.log(`Webflow item deleted successfully.`);
+
+        // Step 3: Unlink the cluster from the user in Firestore.
+        console.log(`Removing cluster ID from user's record in Firestore...`);
+        await userDocRef.update({
+            clusters: FieldValue.arrayRemove(clusterId)
+        });
+        console.log(`Firestore record updated.`);
+
+        // NOTE: We are NOT deleting the asset folder or assets. This is a safety measure.
+        // A future admin tool could be built to clean up orphaned asset folders if needed.
+
+        res.status(200).json({ message: 'Cluster deleted successfully.' });
+
+    } catch (error) {
+        console.error(`Error deleting cluster ${clusterId}:`, error.response ? error.response.data : error.message);
+        res.status(500).json({ message: 'Server error while deleting cluster.' });
+    }
+});
 
 /// --- NEW: PUBLISH A SINGLE CLUSTER ---
 // --- FINAL CORRECTED VERSION: PUBLISH A SINGLE CLUSTER ITEM ---
