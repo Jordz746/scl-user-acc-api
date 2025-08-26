@@ -66,7 +66,13 @@ router.post('/', async (req, res) => {
       isArchived: false, isDraft: false,
       fieldData: {
         'name': clusterName,
-        'slug': clusterName.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 255),
+        'slug': clusterName
+            .toLowerCase()
+            .replace(/[^a-z0-9\s-]/g, '') // 1. Remove all special characters except spaces and hyphens
+            .trim()                     // 2. Remove leading/trailing spaces
+            .replace(/\s+/g, '-')       // 3. Replace spaces with hyphens
+            .replace(/-+/g, '-')        // 4. Replace multiple hyphens with a single one
+            .slice(0, 255),
         'firebase-uid': uid,
         'cluster-name': clusterName,
         'cluster-short-description---max-100-characters': shortDescription,
@@ -350,7 +356,13 @@ router.patch('/:clusterId', async (req, res) => {
             isArchived: false, isDraft: false,
             fieldData: {
                 'name': clusterName,
-                'slug': clusterName.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 255),
+                'slug': clusterName
+                        .toLowerCase()
+                        .replace(/[^a-z0-9\s-]/g, '') // 1. Remove all special characters except spaces and hyphens
+                        .trim()                     // 2. Remove leading/trailing spaces
+                        .replace(/\s+/g, '-')       // 3. Replace spaces with hyphens
+                        .replace(/-+/g, '-')        // 4. Replace multiple hyphens with a single one
+                        .slice(0, 255),
                 'cluster-name': clusterName,
                 'cluster-short-description---max-100-characters': shortDescription,
                 'cluster-description': longDescription,
