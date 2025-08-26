@@ -9,6 +9,39 @@ const md5File = require('md5-file');
 const FormData = require('form-data');
 const axios = require('axios'); // Our reliable HTTP client
 
+// --- NEW HELPER FUNCTION TO HANDLE PAGINATION ---
+const fetchAllAssets = async (siteId, apiToken) => {
+    let allAssets = [];
+    let offset = 0;
+    const limit = 100; // The max limit per request
+    let hasNextPage = true;
+
+    console.log("Fetching all assets with pagination...");
+
+    while (hasNextPage) {
+        const response = await axios.get(
+            `https://api.webflow.com/v2/sites/${siteId}/assets?offset=${offset}&limit=${limit}`,
+            { headers: { "Authorization": `Bearer ${apiToken}` } }
+        );
+
+        const { assets, pagination } = response.data;
+        if (assets && assets.length > 0) {
+            allAssets = allAssets.concat(assets);
+        }
+
+        // Check if there are more assets to fetch
+        if (pagination.offset + assets.length < pagination.total) {
+            offset += limit;
+        } else {
+            hasNextPage = false;
+        }
+    }
+    
+    console.log(`Finished fetching. Found ${allAssets.length} total assets.`);
+    return allAssets;
+};
+
+
 const router = express.Router();
 
 // --- CREATE A NEW CLUSTER (USING AXIOS) ---
@@ -132,20 +165,16 @@ router.post('/:clusterId/image', async (req, res) => {
             const existingImageUrl = currentItemData[fieldToUpdate];
 
            
-            // --- STEP 2: If an image exists, find and delete its asset (Robust Version) ---
+            // --- STEP 2: If an image exists, find and delete its asset (Now with Pagination) ---
             if (existingImageUrl) {
                 try {
-                    // Extract the filename from the full URL
                     const existingFileName = existingImageUrl.split('/').pop();
                     console.log(`Step 2: Found existing image. Filename: ${existingFileName}. Attempting to delete asset.`);
 
-                    const assetsResponse = await axios.get(
-                        `https://api.webflow.com/v2/sites/${siteId}/assets`,
-                        { headers: { "Authorization": `Bearer ${apiToken}` } }
-                    );
+                    // Use our new helper function to get ALL assets
+                    const allAssets = await fetchAllAssets(siteId, apiToken);
                     
-                    // THIS IS THE ROBUST COMPARISON
-                    const assetToDelete = assetsResponse.data.assets.find(asset => asset.originalFileName === existingFileName);
+                    const assetToDelete = allAssets.find(asset => asset.originalFileName === existingFileName);
 
                     if (assetToDelete) {
                         console.log(`Found matching asset to delete with ID: ${assetToDelete.id}`);
