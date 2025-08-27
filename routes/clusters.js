@@ -122,7 +122,7 @@ router.post('/', async (req, res) => {
 
 // routes/clusters.js
 
-// --- UPLOAD AN IMAGE (FINAL, COMPLETE, UNABBREVIATED VERSION) ---
+// --- UPLOAD AN IMAGE (WITH FIRESTORE ASSET ID TRACKING) ---
 router.post('/:clusterId/image', async (req, res) => {
     const { clusterId } = req.params;
     const { type } = req.query; 
@@ -132,139 +132,146 @@ router.post('/:clusterId/image', async (req, res) => {
     const parentAssetFolderId = process.env.WEBFLOW_PARENT_ASSET_FOLDER_ID;
     const collectionId = process.env.WEBFLOW_CLUSTER_COLLECTION_ID;
 
-    // Security check
-    const db = getFirestore();
-    const userDoc = await db.collection('users').doc(uid).get();
-    if (!userDoc.exists || !userDoc.data().clusters.includes(clusterId)) {
-        return res.status(403).json({ message: 'Forbidden: You do not own this cluster.' });
-    }
-
-    const form = new Formidable();
-    form.parse(req, async (err, fields, files) => {
-        if (err) { return res.status(500).json({ message: 'Error parsing form' }); }
-        const imageFile = files.image?.[0];
-        if (!imageFile) { return res.status(400).json({ message: 'No image file uploaded' }); }
-        
-        // --- THIS SECTION WAS MISSING ---
-        // --- Backend File Validation ---
-        const MAX_SIZE_MB = 3.5;
-        if (imageFile.size > MAX_SIZE_MB * 1024 * 1024) {
-            return res.status(400).json({ message: `File is too large. Maximum size is ${MAX_SIZE_MB}MB.` });
+    try {
+        // --- Security check ---
+        const db = getFirestore();
+        const userDoc = await db.collection('users').doc(uid).get();
+        if (!userDoc.exists || !userDoc.data().clusters.includes(clusterId)) {
+            return res.status(403).json({ message: 'Forbidden: You do not own this cluster.' });
         }
-        const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
-        if (!ALLOWED_TYPES.includes(imageFile.mimetype)) {
-            return res.status(400).json({ message: 'Invalid file type. Only JPG, PNG, and WEBP are allowed.' });
-        }
-        // --- END OF MISSING SECTION ---
 
-        try {
-            // --- STEP 1: Get current CMS item ---
-            const itemResponse = await axios.get(
-                `https://api.webflow.com/v2/collections/${collectionId}/items/${clusterId}`,
-                { headers: { "Authorization": `Bearer ${apiToken}` } }
-            );
-            const currentItemData = itemResponse.data.fieldData;
-            
-            // --- THIS IS THE UNABBREVIATED FIELD MAP ---
-            const fieldToUpdate = {
-                'logo-1-1': '1-1-cluster-logo-image-link',
-                'banner-16-9': '16-9-banner-image-link',
-                'banner-9-16': '9-16-banner-image-link'
-            }[type];
-            if (!fieldToUpdate) return res.status(400).json({ message: 'Invalid image type.' });
-            const existingImageUrl = currentItemData[fieldToUpdate];
+        // --- Parse form data ---
+        const form = new Formidable();
+        form.parse(req, async (err, fields, files) => {
+            if (err) return res.status(500).json({ message: 'Error parsing form' });
+            const imageFile = files.image?.[0];
+            if (!imageFile) return res.status(400).json({ message: 'No image file uploaded' });
 
-            // --- STEP 2: Delete existing asset if it exists ---
-            if (existingImageUrl) {
-                try {
-                    const existingFileName = existingImageUrl.split('/').pop();
-                    const allAssets = await fetchAllAssets(siteId, apiToken);
-                    const assetToDelete = allAssets.find(asset => asset.originalFileName === existingFileName);
-                    if (assetToDelete) {
-                        console.log(`Deleting existing asset ID: ${assetToDelete.id}`);
+            // --- File validation ---
+            const MAX_SIZE_MB = 3.5;
+            if (imageFile.size > MAX_SIZE_MB * 1024 * 1024) {
+                return res.status(400).json({ message: `File is too large. Max size is ${MAX_SIZE_MB}MB.` });
+            }
+            const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+            if (!ALLOWED_TYPES.includes(imageFile.mimetype)) {
+                return res.status(400).json({ message: 'Invalid file type. Only JPG, PNG, and WEBP allowed.' });
+            }
+
+            try {
+                // --- STEP 1: Check Firestore for old assetId ---
+                const clusterDoc = await db.collection('clusters').doc(clusterId).get();
+                const clusterAssets = clusterDoc.data()?.assets || {};
+                const oldAsset = clusterAssets[type];
+
+                if (oldAsset?.assetId) {
+                    try {
+                        console.log(`Deleting old asset: ${oldAsset.assetId}`);
                         await axios.delete(
-                            `https://api.webflow.com/v2/assets/${assetToDelete.id}`,
+                            `https://api.webflow.com/v2/assets/${oldAsset.assetId}`,
                             { headers: { "Authorization": `Bearer ${apiToken}` } }
                         );
-                        console.log(`Successfully deleted asset.`);
+                        console.log("Old asset deleted.");
+                    } catch (deleteErr) {
+                        console.error("Failed to delete old asset:", deleteErr.message);
                     }
-                } catch (deleteError) {
-                    console.error("Could not delete existing asset. Proceeding.", deleteError.message);
                 }
-            }
-            
-            // --- STEP 3: Get or Create Subfolder ---
-            let subfolderId = null;
-            const listFoldersResponse = await axios.get(
-                `https://api.webflow.com/v2/sites/${siteId}/asset_folders`,
-                { headers: { "Authorization": `Bearer ${apiToken}` } }
-            );
-            const existingFolder = listFoldersResponse.data.assetFolders.find(f => f.displayName === clusterId);
-            if (existingFolder) {
-                subfolderId = existingFolder.id;
-            } else {
-                const createFolderResponse = await axios.post(
+
+                // --- STEP 2: Get or Create Subfolder ---
+                let subfolderId = null;
+                const listFoldersResponse = await axios.get(
                     `https://api.webflow.com/v2/sites/${siteId}/asset_folders`,
-                    { displayName: clusterId, parentFolder: parentAssetFolderId },
                     { headers: { "Authorization": `Bearer ${apiToken}` } }
                 );
-                subfolderId = createFolderResponse.data.id;
+                const existingFolder = listFoldersResponse.data.assetFolders.find(f => f.displayName === clusterId);
+                if (existingFolder) {
+                    subfolderId = existingFolder.id;
+                } else {
+                    const createFolderResponse = await axios.post(
+                        `https://api.webflow.com/v2/sites/${siteId}/asset_folders`,
+                        { displayName: clusterId, parentFolder: parentAssetFolderId },
+                        { headers: { "Authorization": `Bearer ${apiToken}` } }
+                    );
+                    subfolderId = createFolderResponse.data.id;
+                }
+
+                // --- STEP 3: Register new asset ---
+                const fileExtension = imageFile.originalFilename.split('.').pop();
+                const timestamp = Date.now();
+                const newUniqueFileName = `${type}_${clusterId}_${timestamp}.${fileExtension}`;
+                const fileHash = await md5File(imageFile.filepath);
+
+                const registerResult = await axios.post(
+                    `https://api.webflow.com/v2/sites/${siteId}/assets`,
+                    { 
+                        fileName: newUniqueFileName,
+                        fileHash: fileHash,
+                        parentFolder: subfolderId 
+                    },
+                    { headers: { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" } }
+                );
+
+                const assetData = registerResult.data;
+
+                // --- STEP 4: Upload file ---
+                const uploadUrl = assetData.uploadUrl;
+                const fileStream = fs.createReadStream(imageFile.filepath);
+                const formData = new FormData();
+                const uploadFields = assetData.uploadDetails || assetData.fields;
+                if (!uploadFields) throw new Error("Invalid Webflow upload details.");
+                Object.keys(uploadFields).forEach(key => formData.append(key, uploadFields[key]));
+                formData.append('file', fileStream);
+
+                const uploadResult = await axios.post(uploadUrl, formData, { headers: formData.getHeaders() });
+                if (![200, 201, 204].includes(uploadResult.status)) {
+                    throw new Error(`File upload failed with status: ${uploadResult.status}`);
+                }
+
+                // --- STEP 5: Update CMS item ---
+                const permanentImageUrl = assetData.hostedUrl || assetData.url;
+                const fieldToUpdate = {
+                    'logo-1-1': '1-1-cluster-logo-image-link',
+                    'banner-16-9': '16-9-banner-image-link',
+                    'banner-9-16': '9-16-banner-image-link'
+                }[type];
+                if (!fieldToUpdate) return res.status(400).json({ message: 'Invalid image type.' });
+
+                const payload = { isDraft: false, isArchived: false, fieldData: { [fieldToUpdate]: permanentImageUrl } };
+                const patchResult = await axios.patch(
+                    `https://api.webflow.com/v2/collections/${collectionId}/items/${clusterId}`,
+                    payload,
+                    { headers: { "Authorization": `Bearer ${apiToken}` } }
+                );
+
+                // --- STEP 6: Save new assetId + URL in Firestore ---
+                await db.collection('clusters').doc(clusterId).set({
+                    assets: {
+                        [type]: {
+                            assetId: assetData.id,
+                            url: permanentImageUrl
+                        }
+                    }
+                }, { merge: true });
+
+                // --- STEP 7: Clean up temp file ---
+                fs.unlink(imageFile.filepath, () => {});
+
+                res.status(200).json({
+                    message: "Image uploaded and cluster updated successfully!",
+                    imageUrl: permanentImageUrl,
+                    updatedItem: patchResult.data
+                });
+
+            } catch (error) {
+                console.error('Error during image upload:', error.response ? error.response.data : error.message);
+                res.status(500).json({ message: 'Server error during image upload.' });
             }
-
-            // --- STEP 4: Register the new asset with a unique name ---
-            const fileExtension = imageFile.originalFilename.split('.').pop();
-            const timestamp = Date.now();
-            // This creates a name like: logo-1-1_68a61e286db3c2463fecb378_1678886400000.webp
-            const newUniqueFileName = `${type}_${clusterId}_${timestamp}.${fileExtension}`;
-
-            const fileHash = await md5File(imageFile.filepath);
-            const registerResult = await axios.post(
-                `https://api.webflow.com/v2/sites/${siteId}/assets`,
-                { 
-                    fileName: newUniqueFileName,
-                    fileHash: fileHash, 
-                    parentFolder: subfolderId 
-                },
-                { headers: { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" } }
-            );
-
-            
-            const assetData = registerResult.data;
-
-            // --- STEP 5: Upload the new file ---
-            const uploadUrl = assetData.uploadUrl;
-            const fileStream = fs.createReadStream(imageFile.filepath);
-            const formData = new FormData();
-            const uploadFields = assetData.uploadDetails || assetData.fields;
-            if (!uploadFields) { throw new Error("Invalid response from Webflow asset registration."); }
-            Object.keys(uploadFields).forEach(key => formData.append(key, uploadFields[key]));
-            formData.append('file', fileStream);
-            const uploadResult = await axios.post(uploadUrl, formData, { headers: formData.getHeaders() });
-            if (uploadResult.status !== 201 && uploadResult.status !== 204) {
-                throw new Error(`File upload failed with status: ${uploadResult.status}`);
-            }
-
-            // --- STEP 6: Update the CMS Item ---
-            const permanentImageUrl = assetData.hostedUrl || assetData.url;
-            const payload = { isDraft: false, isArchived: false, fieldData: { [fieldToUpdate]: permanentImageUrl } };
-            const patchResult = await axios.patch(
-                `https://api.webflow.com/v2/collections/${collectionId}/items/${clusterId}`,
-                payload,
-                { headers: { "Authorization": `Bearer ${apiToken}` } }
-            );
-
-            res.status(200).json({
-                message: "Image uploaded and cluster updated successfully!",
-                imageUrl: permanentImageUrl,
-                updatedItem: patchResult.data
-            });
-
-        } catch (error) {
-            console.error('Error during image upload process:', error.response ? error.response.data : error.message);
-            res.status(500).json({ message: 'Server error during image upload.' });
-        }
-    });
+        });
+    } catch (outerErr) {
+        console.error('Outer error in image upload route:', outerErr.message);
+        res.status(500).json({ message: 'Unexpected server error.' });
+    }
 });
+
 
 // --- NEW: GET ALL CLUSTERS FOR THE LOGGED-IN USER ---
 router.get('/', async (req, res) => {
