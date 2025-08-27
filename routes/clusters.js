@@ -214,6 +214,8 @@ router.post('/:clusterId/image', async (req, res) => {
                 );
                 subfolderId = createFolderResponse.data.id;
             }
+
+            const assetData = registerResult.data;
             
             // --- STEP 4: Register the new asset ---
             const fileExtension = imageFile.originalFilename.split('.').pop();
