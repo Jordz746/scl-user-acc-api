@@ -212,15 +212,22 @@ router.post('/:clusterId/image', async (req, res) => {
             }
 
             // --- STEP 4: Register the new asset with a unique name ---
-            const fileExtension = imageFile.originalFilename.split('.').pop();
-            const newUniqueFileName = `${type}_${imageFile.originalFilename.replace(`.${fileExtension}`, '')}.${fileExtension}`;
+            let newUniqueFileName = imageFile.originalFilename;
+            const prefix = `${type}_`;;
             const fileHash = await md5File(imageFile.filepath);
             
+            // This makes the operation "idempotent" - running it multiple times has the same result as running it once.
+            if (!newUniqueFileName.startsWith(prefix)) {
+                newUniqueFileName = `${prefix}${newUniqueFileName}`;
+            }
+
             const registerResult = await axios.post(
                 `https://api.webflow.com/v2/sites/${siteId}/assets`,
                 { fileName: newUniqueFileName, fileHash: fileHash, parentFolder: subfolderId },
                 { headers: { "Authorization": `Bearer ${apiToken}` } }
             );
+
+            
             const assetData = registerResult.data;
 
             // --- STEP 5: Upload the new file ---
