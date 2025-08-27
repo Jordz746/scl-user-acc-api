@@ -122,7 +122,7 @@ router.post('/', async (req, res) => {
 
 // routes/clusters.js
 
-// --- UPLOAD AN IMAGE (FINAL, DEFINITIVE, CORRECTED VERSION) ---
+// --- UPLOAD AN IMAGE (FINAL, COMPLETE, UNABBREVIATED VERSION) ---
 router.post('/:clusterId/image', async (req, res) => {
     const { clusterId } = req.params;
     const { type } = req.query; 
@@ -145,8 +145,17 @@ router.post('/:clusterId/image', async (req, res) => {
         const imageFile = files.image?.[0];
         if (!imageFile) { return res.status(400).json({ message: 'No image file uploaded' }); }
         
-        // Backend Validation
-        // ... (validation logic is correct)
+        // --- THIS SECTION WAS MISSING ---
+        // --- Backend File Validation ---
+        const MAX_SIZE_MB = 3.5;
+        if (imageFile.size > MAX_SIZE_MB * 1024 * 1024) {
+            return res.status(400).json({ message: `File is too large. Maximum size is ${MAX_SIZE_MB}MB.` });
+        }
+        const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+        if (!ALLOWED_TYPES.includes(imageFile.mimetype)) {
+            return res.status(400).json({ message: 'Invalid file type. Only JPG, PNG, and WEBP are allowed.' });
+        }
+        // --- END OF MISSING SECTION ---
 
         try {
             // --- STEP 1: Get current CMS item ---
@@ -155,7 +164,13 @@ router.post('/:clusterId/image', async (req, res) => {
                 { headers: { "Authorization": `Bearer ${apiToken}` } }
             );
             const currentItemData = itemResponse.data.fieldData;
-            const fieldToUpdate = { /* ... your field map ... */ }[type];
+            
+            // --- THIS IS THE UNABBREVIATED FIELD MAP ---
+            const fieldToUpdate = {
+                'logo-1-1': '1-1-cluster-logo-image-link',
+                'banner-16-9': '16-9-banner-image-link',
+                'banner-9-16': '9-16-banner-image-link'
+            }[type];
             if (!fieldToUpdate) return res.status(400).json({ message: 'Invalid image type.' });
             const existingImageUrl = currentItemData[fieldToUpdate];
 
@@ -163,14 +178,15 @@ router.post('/:clusterId/image', async (req, res) => {
             if (existingImageUrl) {
                 try {
                     const existingFileName = existingImageUrl.split('/').pop();
-                    const allAssets = await fetchAllAssets(siteId, apiToken); // Using your pagination helper
+                    const allAssets = await fetchAllAssets(siteId, apiToken);
                     const assetToDelete = allAssets.find(asset => asset.originalFileName === existingFileName);
                     if (assetToDelete) {
+                        console.log(`Deleting existing asset ID: ${assetToDelete.id}`);
                         await axios.delete(
                             `https://api.webflow.com/v2/assets/${assetToDelete.id}`,
                             { headers: { "Authorization": `Bearer ${apiToken}` } }
                         );
-                        console.log(`Successfully deleted existing asset ID: ${assetToDelete.id}`);
+                        console.log(`Successfully deleted asset.`);
                     }
                 } catch (deleteError) {
                     console.error("Could not delete existing asset. Proceeding.", deleteError.message);
@@ -190,7 +206,7 @@ router.post('/:clusterId/image', async (req, res) => {
                 const createFolderResponse = await axios.post(
                     `https://api.webflow.com/v2/sites/${siteId}/asset_folders`,
                     { displayName: clusterId, parentFolder: parentAssetFolderId },
-                    { headers: { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" } }
+                    { headers: { "Authorization": `Bearer ${apiToken}` } }
                 );
                 subfolderId = createFolderResponse.data.id;
             }
@@ -200,8 +216,6 @@ router.post('/:clusterId/image', async (req, res) => {
             const newUniqueFileName = `${type}_${imageFile.originalFilename.replace(`.${fileExtension}`, '')}.${fileExtension}`;
             const fileHash = await md5File(imageFile.filepath);
             
-            // --- THIS IS THE CRITICAL FIX ---
-            // The declaration and the call are now in the correct order.
             const registerResult = await axios.post(
                 `https://api.webflow.com/v2/sites/${siteId}/assets`,
                 { fileName: newUniqueFileName, fileHash: fileHash, parentFolder: subfolderId },
