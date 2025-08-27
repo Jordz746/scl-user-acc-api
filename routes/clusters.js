@@ -212,16 +212,20 @@ router.post('/:clusterId/image', async (req, res) => {
             }
 
             // --- STEP 4: Register the new asset with a unique name ---
-           let newUniqueFileName = imageFile.originalFilename;
-           const prefix = `${type}_`;
-            if (!newUniqueFileName.startsWith(prefix)) {
-                newUniqueFileName = `${prefix}${newUniqueFileName}`;
-            }
+            const fileExtension = imageFile.originalFilename.split('.').pop();
+            const timestamp = Date.now();
+            // This creates a name like: logo-1-1_68a61e286db3c2463fecb378_1678886400000.webp
+            const newUniqueFileName = `${type}_${clusterId}_${timestamp}.${fileExtension}`;
+
             const fileHash = await md5File(imageFile.filepath);
             const registerResult = await axios.post(
-                // ...
-                { fileName: newUniqueFileName, fileHash: fileHash, parentFolder: subfolderId },
-                // ...
+                `https://api.webflow.com/v2/sites/${siteId}/assets`,
+                { 
+                    fileName: newUniqueFileName,
+                    fileHash: fileHash, 
+                    parentFolder: subfolderId 
+                },
+                { headers: { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" } }
             );
 
             
