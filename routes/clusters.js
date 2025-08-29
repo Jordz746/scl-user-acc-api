@@ -41,11 +41,12 @@ const fetchAllAssets = async (siteId, apiToken) => {
     return allAssets;
 };
 
-// --- FINAL, DEFINITIVE HELPER TO DELETE ALL ASSETS AND FOLDER ---
+// --- FINAL, DEFINITIVE, CORRECT HELPER TO DELETE ASSETS AND FOLDER ---
 const deleteAllAssetsForCluster = async (clusterId, siteId, apiToken) => {
     console.log(`Starting asset cleanup for cluster: ${clusterId}`);
     try {
-        // Step 1: Find the asset subfolder by its unique name (the clusterId).
+        // --- STEP 1: Find the Folder's UNIQUE ID ---
+        // Find the folder by its displayName, which we set to be the clusterId.
         const listFoldersResponse = await axios.get(
             `https://api.webflow.com/v2/sites/${siteId}/asset_folders`,
             { headers: { "Authorization": `Bearer ${apiToken}` } }
@@ -53,27 +54,25 @@ const deleteAllAssetsForCluster = async (clusterId, siteId, apiToken) => {
         const folderToDelete = listFoldersResponse.data.assetFolders.find(f => f.displayName === clusterId);
 
         if (!folderToDelete) {
-            console.log("No matching asset folder found to delete. Cleanup skipped.");
+            console.log("No matching asset folder found to delete. Cleanup can be skipped.");
             return;
         }
-        const folderIdToDelete = folderToDelete.id;
-        console.log(`Found asset folder to delete with ID: ${folderIdToDelete}`);
+        const folderIdToDelete = folderToDelete.id; // This is the unique ID, e.g., 68b22f02...
+        console.log(`Found asset folder to delete. Name: ${clusterId}, ID: ${folderIdToDelete}`);
 
-        // Step 2: Get the details of that specific folder, which includes a list of its assets.
-        // This is more reliable than filtering all assets.
-        const folderDetailsResponse = await axios.get(
-            `https://api.webflow.com/v2/asset_folders/${folderIdToDelete}`,
-            { headers: { "Authorization": `Bearer ${apiToken}` } }
-        );
-        const assetsToDelete = folderDetailsResponse.data.assets;
+        // --- STEP 2: Fetch ALL assets and filter them correctly ---
+        const allAssets = await fetchAllAssets(siteId, apiToken); // Use our pagination helper
 
-        if (!assetsToDelete || assetsToDelete.length === 0) {
-            console.log("No assets found inside the folder. Proceeding to delete the folder.");
-        } else {
-            console.log(`Found ${assetsToDelete.length} assets to delete in folder.`);
-            // Step 3: Delete each asset in the folder.
+        // THE DEFINITIVE FIX IS HERE: We compare the asset's 'parentFolder' property
+        // directly to the unique folder ID we just found.
+        const assetsToDelete = allAssets.filter(asset => asset.parentFolder === folderIdToDelete);
+        
+        console.log(`Found ${assetsToDelete.length} assets to delete inside this folder.`);
+
+        if (assetsToDelete.length > 0) {
+            // --- STEP 3: Delete each asset found in the folder ---
             const deletePromises = assetsToDelete.map(asset => {
-                console.log(`Queueing asset for deletion: ${asset.id}`);
+                console.log(`Queueing asset for deletion: ${asset.id} (${asset.originalFileName})`);
                 return axios.delete(
                     `https://api.webflow.com/v2/assets/${asset.id}`,
                     { headers: { "Authorization": `Bearer ${apiToken}` } }
@@ -83,18 +82,18 @@ const deleteAllAssetsForCluster = async (clusterId, siteId, apiToken) => {
             console.log("All assets in folder have been deleted.");
         }
 
-        // Step 4: After deleting all assets, delete the now-empty folder.
+        // --- STEP 4: Delete the now-empty folder ---
+        console.log(`Attempting to delete empty folder: ${folderIdToDelete}`);
         await axios.delete(
             `https://api.webflow.com/v2/asset_folders/${folderIdToDelete}`,
             { headers: { "Authorization": `Bearer ${apiToken}` } }
         );
-        console.log(`Successfully deleted asset folder: ${folderIdToDelete}`);
+        console.log(`Successfully deleted asset folder.`);
 
     } catch (error) {
         console.error("An error occurred during asset cleanup, but the main deletion will continue.", error.message);
     }
 };
-
 
 const router = express.Router();
 
