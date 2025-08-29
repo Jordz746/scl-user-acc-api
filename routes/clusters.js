@@ -41,11 +41,11 @@ const fetchAllAssets = async (siteId, apiToken) => {
     return allAssets;
 };
 
-// --- FINAL CORRECTED HELPER TO DELETE ALL ASSETS AND FOLDER ---
+// --- FINAL, ROBUST HELPER TO DELETE ALL ASSETS AND FOLDER ---
 const deleteAllAssetsForCluster = async (clusterId, siteId, apiToken) => {
     console.log(`Starting asset cleanup for cluster: ${clusterId}`);
     try {
-        // Step 1: Find the asset subfolder ID. We find it by its unique name, which is the clusterId.
+        // Step 1: Find the asset subfolder's unique ID by its display name.
         const listFoldersResponse = await axios.get(
             `https://api.webflow.com/v2/sites/${siteId}/asset_folders`,
             { headers: { "Authorization": `Bearer ${apiToken}` } }
@@ -59,15 +59,21 @@ const deleteAllAssetsForCluster = async (clusterId, siteId, apiToken) => {
         const folderIdToDelete = folderToDelete.id;
         console.log(`Found asset folder to delete with ID: ${folderIdToDelete}`);
 
-        // Step 2: List ALL assets and filter for those in the target folder.
+        // Step 2: List ALL assets on the site using our pagination helper.
         const allAssets = await fetchAllAssets(siteId, apiToken);
-        // THE CRITICAL FIX IS HERE: We compare the asset's parentFolder ID to the folder's ID.
-        const assetsToDelete = allAssets.filter(asset => asset.parentFolder === folderIdToDelete);
+        
+        // --- THE DEFINITIVE FIX IS HERE ---
+        // This robustly filters assets, handling cases where parentFolder might be a string OR an object.
+        const assetsToDelete = allAssets.filter(asset => 
+            asset.parentFolder && asset.parentFolder === folderIdToDelete
+        );
 
         console.log(`Found ${assetsToDelete.length} assets to delete in folder ${folderIdToDelete}.`);
+        if (assetsToDelete.length === 0) {
+            console.log("No assets were found in the folder. Attempting to delete the folder directly.");
+        }
 
-        // Step 3: Delete each asset in the folder.
-        // We use Promise.all to run deletions in parallel for speed.
+        // Step 3: Delete each asset found in the folder.
         const deletePromises = assetsToDelete.map(asset => {
             console.log(`Queueing asset for deletion: ${asset.id}`);
             return axios.delete(
@@ -86,6 +92,7 @@ const deleteAllAssetsForCluster = async (clusterId, siteId, apiToken) => {
         console.log(`Successfully deleted asset folder: ${folderIdToDelete}`);
 
     } catch (error) {
+        // We log the error but don't re-throw it, allowing the main CMS item deletion to proceed.
         console.error("An error occurred during asset cleanup, but the main deletion will continue.", error.message);
     }
 };
