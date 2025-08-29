@@ -60,7 +60,11 @@ const deleteAllAssetsForCluster = async (clusterId, siteId, apiToken) => {
         // Step 2: List ALL assets in that folder.
         // The Asset API doesn't let us list by folder, so we must fetch all and filter.
         const allAssets = await fetchAllAssets(siteId, apiToken);
-        const assetsToDelete = allAssets.filter(asset => asset.parentFolder === folderToDelete.id);
+        const assetsToDelete = allAssets.filter(asset => {
+            // The parentFolder property can be an object with an 'id' or just a string ID.
+            // We must handle both cases.
+            return asset.parentFolder && (asset.parentFolder === folderToDelete.id || asset.parentFolder.id === folderToDelete.id);
+        });
 
         console.log(`Found ${assetsToDelete.length} assets to delete.`);
 
