@@ -41,6 +41,50 @@ const fetchAllAssets = async (siteId, apiToken) => {
     return allAssets;
 };
 
+// --- NEW HELPER TO DELETE ALL ASSETS AND FOLDER FOR A CLUSTER ---
+const deleteAllAssetsForCluster = async (clusterId, siteId, apiToken) => {
+    console.log(`Starting asset cleanup for cluster: ${clusterId}`);
+    try {
+        // Step 1: Find the asset subfolder for this cluster.
+        const listFoldersResponse = await axios.get(
+            `https://api.webflow.com/v2/sites/${siteId}/asset_folders`,
+            { headers: { "Authorization": `Bearer ${apiToken}` } }
+        );
+        const folderToDelete = listFoldersResponse.data.assetFolders.find(f => f.displayName === clusterId);
+
+        if (!folderToDelete) {
+            console.log("No matching asset folder found to delete. Cleanup skipped.");
+            return;
+        }
+
+        // Step 2: List ALL assets in that folder.
+        // The Asset API doesn't let us list by folder, so we must fetch all and filter.
+        const allAssets = await fetchAllAssets(siteId, apiToken);
+        const assetsToDelete = allAssets.filter(asset => asset.parentFolder === folderToDelete.id);
+
+        console.log(`Found ${assetsToDelete.length} assets to delete.`);
+
+        // Step 3: Delete each asset one by one.
+        for (const asset of assetsToDelete) {
+            await axios.delete(
+                `https://api.webflow.com/v2/assets/${asset.id}`,
+                { headers: { "Authorization": `Bearer ${apiToken}` } }
+            );
+            console.log(`Deleted asset: ${asset.id}`);
+        }
+
+        // Step 4: After deleting all assets, delete the empty folder.
+        await axios.delete(
+            `https://api.webflow.com/v2/asset_folders/${folderToDelete.id}`,
+            { headers: { "Authorization": `Bearer ${apiToken}` } }
+        );
+        console.log(`Deleted asset folder: ${folderToDelete.id}`);
+
+    } catch (error) {
+        console.error("An error occurred during asset cleanup, but the main deletion will continue.", error.message);
+    }
+};
+
 
 const router = express.Router();
 
@@ -341,8 +385,7 @@ router.get('/:clusterId', async (req, res) => {
     }
 });
 
-// --- NEW: UPDATE AN EXISTING CLUSTER ---
-// --- FINAL, CORRECTED UPDATE ROUTE ---
+
 // --- FINAL, COMPLETE UPDATE ROUTE ---
 router.patch('/:clusterId', async (req, res) => {
     const { clusterId } = req.params;
@@ -413,10 +456,12 @@ router.patch('/:clusterId', async (req, res) => {
 });
 
 // --- NEW: DELETE A CLUSTER ---
+// --- DELETE A CLUSTER (WITH ASSET CLEANUP) ---
 router.delete('/:clusterId', async (req, res) => {
     const { clusterId } = req.params;
     const { uid } = req.user;
     const apiToken = process.env.WEBFLOW_API_TOKEN;
+    const siteId = process.env.WEBFLOW_SITE_ID; // We need siteId for cleanup
     const collectionId = process.env.WEBFLOW_CLUSTER_COLLECTION_ID;
 
     try {
@@ -429,25 +474,30 @@ router.delete('/:clusterId', async (req, res) => {
             return res.status(403).json({ message: 'Forbidden: You do not have permission to delete this cluster.' });
         }
 
-        // Step 2: Delete the item from the Webflow CMS.
-        console.log(`Attempting to delete Webflow item: ${clusterId}`);
+        // --- Step 2: ASSET CLEANUP ---
+        // We do this first. If it fails for any reason, the try/catch inside the helper
+        // will log the error, but allow the rest of the deletion process to continue.
+        await deleteAllAssetsForCluster(clusterId, siteId, apiToken);
+
+        // Step 3: Delete the item from the Webflow CMS.
+        console.log(`Attempting to delete Webflow CMS item: ${clusterId}`);
         await axios.delete(
             `https://api.webflow.com/v2/collections/${collectionId}/items/${clusterId}`,
             { headers: { "Authorization": `Bearer ${apiToken}` } }
         );
-        console.log(`Webflow item deleted successfully.`);
+        console.log(`Webflow CMS item deleted successfully.`);
 
-        // Step 3: Unlink the cluster from the user in Firestore.
+        // Step 4: Unlink the cluster from the main user record in Firestore.
         console.log(`Removing cluster ID from user's record in Firestore...`);
         await userDocRef.update({
             clusters: FieldValue.arrayRemove(clusterId)
         });
-        console.log(`Firestore record updated.`);
+        
+        // Step 5: Delete the cluster's specific asset-tracking document from Firestore.
+        await db.collection('clusters').doc(clusterId).delete();
+        console.log(`Firestore records updated and cleaned.`);
 
-        // NOTE: We are NOT deleting the asset folder or assets. This is a safety measure.
-        // A future admin tool could be built to clean up orphaned asset folders if needed.
-
-        res.status(200).json({ message: 'Cluster deleted successfully.' });
+        res.status(200).json({ message: 'Cluster and all associated assets deleted successfully.' });
 
     } catch (error) {
         console.error(`Error deleting cluster ${clusterId}:`, error.response ? error.response.data : error.message);
