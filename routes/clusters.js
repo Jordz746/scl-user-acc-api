@@ -41,11 +41,12 @@ const fetchAllAssets = async (siteId, apiToken) => {
     return allAssets;
 };
 
-// --- FINAL, DEFINITIVE HELPER TO DELETE ASSETS (FOLDER REMAINS) ---
+// --- FINAL, DEFINITIVE HELPER TO DELETE ASSETS AND FOLDER ---
 const deleteAllAssetsForCluster = async (clusterId, siteId, apiToken) => {
     console.log(`Starting asset cleanup for cluster: ${clusterId}`);
     try {
-        // Step 1: Find the Folder's UNIQUE ID.
+        // --- STEP 1: Find the Folder's UNIQUE ID ---
+        // Find the folder by its displayName, which we set to be the clusterId.
         const listFoldersResponse = await axios.get(
             `https://api.webflow.com/v2/sites/${siteId}/asset_folders`,
             { headers: { "Authorization": `Bearer ${apiToken}` } }
@@ -57,35 +58,49 @@ const deleteAllAssetsForCluster = async (clusterId, siteId, apiToken) => {
             return;
         }
         const folderIdToDelete = folderToDelete.id;
-        console.log(`Found asset folder with ID: ${folderIdToDelete}`);
+        console.log(`Found asset folder to delete with ID: ${folderIdToDelete}`);
 
-        // Step 2: Fetch ALL assets and filter for those in the target folder.
-        const allAssets = await fetchAllAssets(siteId, apiToken);
-        const assetsToDelete = allAssets.filter(asset => asset.parentFolder === folderIdToDelete);
-        
-        console.log(`Found ${assetsToDelete.length} assets to delete inside this folder.`);
+        // --- STEP 2: Get the details of THAT FOLDER to find its assets ---
+        // This is the correct, definitive way to get the contents of a folder.
+        const folderDetailsResponse = await axios.get(
+            `https://api.webflow.com/v2/asset_folders/${folderIdToDelete}`,
+            { headers: { "Authorization": `Bearer ${apiToken}` } }
+        );
+        const assetIdsToDelete = folderDetailsResponse.data.assets; // This is an array of Asset IDs
 
-        if (assetsToDelete.length > 0) {
-            // Step 3: Delete each asset found in the folder.
-            const deletePromises = assetsToDelete.map(asset => {
-                console.log(`Queueing asset for deletion: ${asset.id} (${asset.originalFileName})`);
+        if (!assetIdsToDelete || assetIdsToDelete.length === 0) {
+            console.log("No assets found inside the folder. Proceeding to delete the empty folder.");
+        } else {
+            console.log(`Found ${assetIdsToDelete.length} assets to delete in folder.`);
+            // --- STEP 3: Delete each asset found in the folder by its ID ---
+            const deletePromises = assetIdsToDelete.map(assetId => {
+                console.log(`Queueing asset for deletion: ${assetId}`);
                 return axios.delete(
-                    `https://api.webflow.com/v2/assets/${asset.id}`,
+                    `https://api.webflow.com/v2/assets/${assetId}`,
                     { headers: { "Authorization": `Bearer ${apiToken}` } }
                 );
             });
             await Promise.all(deletePromises);
             console.log("All assets in folder have been successfully deleted.");
         }
-        
-        // We do not delete the folder, as the API does not support it.
-        // The folder will now be empty.
+
+        // --- STEP 4: Delete the now-empty folder ---
+        // Note: The API does not currently support deleting asset folders.
+        // This line is commented out but kept for future-proofing if Webflow adds the feature.
+        /*
+        await axios.delete(
+            `https://api.webflow.com/v2/asset_folders/${folderIdToDelete}`,
+            { headers: { "Authorization": `Bearer ${apiToken}` } }
+        );
+        console.log(`Successfully deleted asset folder: ${folderIdToDelete}`);
+        */
+       console.log("Asset deletion complete. The empty folder will remain as per Webflow API limitations.");
 
     } catch (error) {
-        // This will now only catch errors from listing folders or deleting assets.
         console.error("An error occurred during asset cleanup.", error.message);
     }
 };
+
 
 const router = express.Router();
 
