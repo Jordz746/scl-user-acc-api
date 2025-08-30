@@ -41,12 +41,11 @@ const fetchAllAssets = async (siteId, apiToken) => {
     return allAssets;
 };
 
-// --- FINAL, DEFINITIVE, CORRECT HELPER TO DELETE ASSETS AND FOLDER ---
+// --- FINAL, DEFINITIVE HELPER TO DELETE ASSETS (FOLDER REMAINS) ---
 const deleteAllAssetsForCluster = async (clusterId, siteId, apiToken) => {
     console.log(`Starting asset cleanup for cluster: ${clusterId}`);
     try {
-        // --- STEP 1: Find the Folder's UNIQUE ID ---
-        // Find the folder by its displayName, which we set to be the clusterId.
+        // Step 1: Find the Folder's UNIQUE ID.
         const listFoldersResponse = await axios.get(
             `https://api.webflow.com/v2/sites/${siteId}/asset_folders`,
             { headers: { "Authorization": `Bearer ${apiToken}` } }
@@ -54,23 +53,20 @@ const deleteAllAssetsForCluster = async (clusterId, siteId, apiToken) => {
         const folderToDelete = listFoldersResponse.data.assetFolders.find(f => f.displayName === clusterId);
 
         if (!folderToDelete) {
-            console.log("No matching asset folder found to delete. Cleanup can be skipped.");
+            console.log("No matching asset folder found. Cleanup skipped.");
             return;
         }
-        const folderIdToDelete = folderToDelete.id; // This is the unique ID, e.g., 68b22f02...
-        console.log(`Found asset folder to delete. Name: ${clusterId}, ID: ${folderIdToDelete}`);
+        const folderIdToDelete = folderToDelete.id;
+        console.log(`Found asset folder with ID: ${folderIdToDelete}`);
 
-        // --- STEP 2: Fetch ALL assets and filter them correctly ---
-        const allAssets = await fetchAllAssets(siteId, apiToken); // Use our pagination helper
-
-        // THE DEFINITIVE FIX IS HERE: We compare the asset's 'parentFolder' property
-        // directly to the unique folder ID we just found.
+        // Step 2: Fetch ALL assets and filter for those in the target folder.
+        const allAssets = await fetchAllAssets(siteId, apiToken);
         const assetsToDelete = allAssets.filter(asset => asset.parentFolder === folderIdToDelete);
         
         console.log(`Found ${assetsToDelete.length} assets to delete inside this folder.`);
 
         if (assetsToDelete.length > 0) {
-            // --- STEP 3: Delete each asset found in the folder ---
+            // Step 3: Delete each asset found in the folder.
             const deletePromises = assetsToDelete.map(asset => {
                 console.log(`Queueing asset for deletion: ${asset.id} (${asset.originalFileName})`);
                 return axios.delete(
@@ -79,19 +75,15 @@ const deleteAllAssetsForCluster = async (clusterId, siteId, apiToken) => {
                 );
             });
             await Promise.all(deletePromises);
-            console.log("All assets in folder have been deleted.");
+            console.log("All assets in folder have been successfully deleted.");
         }
-
-        // --- STEP 4: Delete the now-empty folder ---
-        console.log(`Attempting to delete empty folder: ${folderIdToDelete}`);
-        await axios.delete(
-            `https://api.webflow.com/v2/asset_folders/${folderIdToDelete}`,
-            { headers: { "Authorization": `Bearer ${apiToken}` } }
-        );
-        console.log(`Successfully deleted asset folder.`);
+        
+        // We do not delete the folder, as the API does not support it.
+        // The folder will now be empty.
 
     } catch (error) {
-        console.error("An error occurred during asset cleanup, but the main deletion will continue.", error.message);
+        // This will now only catch errors from listing folders or deleting assets.
+        console.error("An error occurred during asset cleanup.", error.message);
     }
 };
 
