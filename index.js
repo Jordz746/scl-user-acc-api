@@ -1,34 +1,38 @@
+// index.js
+
 require('dotenv').config();
 
 const express = require('express');
 const cors = require('cors');
-const { verifyFirebaseToken } = require('./middleware/auth');
+// Import BOTH middleware functions from our auth file
+const { verifyFirebaseToken, adminAuth } = require('./middleware/auth');
 
-// Import our new router
+// Import our route handlers
 const clusterRoutes = require('./routes/clusters');
+const adminRoutes = require('./routes/admin');
 
 const app = express();
 
+// --- Global Middleware ---
 app.use(cors());
 app.use(express.json());
 
-// --- Public Route ---
+
+// --- Route Definitions ---
+
+// 1. Public Health Check Route
 app.get('/api', (req, res) => {
   res.status(200).json({ message: 'SCL Hub API is running!' });
 });
 
-// --- Protected Routes ---
-// Any route starting with /api/clusters will first go through our verifyFirebaseToken middleware,
-// then be handled by the logic in clusterRoutes.
+
+// 2. Protected Admin Routes (Uses HTTP Basic Auth popup)
+app.use('/api/admin', adminAuth, adminRoutes);
+
+
+// 3. Protected User Routes (Requires Firebase Bearer Token)
 app.use('/api/clusters', verifyFirebaseToken, clusterRoutes);
 
 
+// Export the app for Vercel
 module.exports = app;
-
-// --- Optional: For local development ---
-if (process.env.NODE_ENV !== 'production') {
-  const port = process.env.PORT || 3001;
-  app.listen(port, () => {
-    console.log(`Server listening on http://localhost:${port}`);
-  });
-}
