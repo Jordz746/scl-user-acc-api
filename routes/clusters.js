@@ -236,11 +236,26 @@ router.post('/:clusterId/image', async (req, res) => {
                     }
                 }
 
-                        // --- STEP 3: ATOMIC & EVENTUALLY CONSISTENT "GET OR CREATE" SUBFOLDER ---
-                        let subfolderId = null;
+                    // --- STEP 3: DEFINITIVE "GET OR CREATE" SUBFOLDER ---
+                    let subfolderId = null;
 
+                    // First, we ALWAYS check if the folder exists.
+                    console.log(`Checking for existing asset folder: ${clusterId}`);
+                    const listFoldersResponse = await axios.get(
+                        `https://api.webflow.com/v2/sites/${siteId}/asset_folders`,
+                        { headers: { "Authorization": `Bearer ${apiToken}` } }
+                    );
+
+                    const existingFolder = listFoldersResponse.data.assetFolders.find(f => f.displayName === clusterId);
+
+                    if (existingFolder) {
+                        // If we find it, we use its ID.
+                        subfolderId = existingFolder.id;
+                        console.log(`Found existing subfolder with ID: ${subfolderId}`);
+                    } else {
+                        // If and ONLY IF we don't find it, we create it.
+                        console.log(`No existing folder found. Creating a new one...`);
                         try {
-                            console.log(`Attempting to create asset folder: ${clusterId}`);
                             const createFolderResponse = await axios.post(
                                 `https://api.webflow.com/v2/sites/${siteId}/asset_folders`,
                                 { displayName: clusterId, parentFolder: parentAssetFolderId },
@@ -248,41 +263,27 @@ router.post('/:clusterId/image', async (req, res) => {
                             );
                             subfolderId = createFolderResponse.data.id;
                             console.log(`Successfully created new subfolder with ID: ${subfolderId}`);
-                        } catch (error) {
-                            if (error.response && error.response.data && error.response.data.code === 'conflict') {
-                                console.log("Folder creation conflicted. Retrying to find the folder with delay...");
-
-                                // --- THIS IS THE FIX: Retry with a delay ---
-                                let attempts = 0;
-                                const maxAttempts = 5;
-                                const delay = 500; // 500 milliseconds
-
-                                while (attempts < maxAttempts) {
-                                    attempts++;
-                                    const listFoldersResponse = await axios.get(
-                                        `https://api.webflow.com/v2/sites/${siteId}/asset_folders`,
-                                        { headers: { "Authorization": `Bearer ${apiToken}` } }
-                                    );
-                                    const existingFolder = listFoldersResponse.data.assetFolders.find(f => f.displayName === clusterId);
-                                    if (existingFolder) {
-                                        subfolderId = existingFolder.id;
-                                        console.log(`Found existing subfolder on attempt #${attempts} with ID: ${subfolderId}`);
-                                        break; // Exit the loop on success
-                                    }
-                                    // If not found, wait and try again
-                                    console.log(`Attempt #${attempts}: Folder not found yet. Waiting ${delay}ms...`);
-                                    await new Promise(resolve => setTimeout(resolve, delay));
-                                }
-
-                                if (!subfolderId) {
-                                    // If it's still not found after all retries, then we have a real problem.
-                                    throw new Error(`Folder creation failed with a conflict, but could not find the folder after ${maxAttempts} attempts.`);
-                                }
+                        } catch (createError) {
+                            // This is a safety net. If creation fails with a conflict, it means
+                            // a parallel request just created it. We can consider this a non-fatal issue
+                            // and try to proceed, but log a clear warning.
+                            if (createError.response && createError.response.data.code === 'conflict') {
+                                console.warn("Caught a conflict error during folder creation. This can happen in a race condition. The upload may fail if the folder cannot be found in time.");
+                                // We don't have an ID, so the next step (asset registration) might fail,
+                                // but the user can simply try again. This prevents the server from crashing.
                             } else {
-                                // It was a different error, so we should re-throw it.
-                                throw error;
+                                // It was a different, more serious error.
+                                throw createError;
                             }
                         }
+                    }
+
+                    // This check is a final safeguard.
+                    if (!subfolderId) {
+                        // If, after all of that, we still don't have an ID, we cannot proceed.
+                        // This will provide a clear error message to the user.
+                        return res.status(500).json({ message: 'Could not create or find an asset folder for this cluster. Please try again in a moment.' });
+                    }
 
                 // --- STEP 3: Register new asset ---
                 const fileExtension = imageFile.originalFilename.split('.').pop();
