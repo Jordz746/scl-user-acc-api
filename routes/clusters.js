@@ -236,41 +236,55 @@ router.post('/:clusterId/image', async (req, res) => {
                     }
                 }
 
-                    // --- STEP 3: DEFINITIVE "GET OR CREATE" SUBFOLDER ---
+                    // --- STEP 3: DEFINITIVE, EVENTUALLY CONSISTENT "GET OR CREATE" SUBFOLDER ---
                     let subfolderId = null;
 
-                    // First, we ALWAYS check if the folder exists.
-                    console.log(`Checking for existing asset folder: ${clusterId}`);
+                    // First, try to find the folder.
+                    console.log(`Step 3.1: Checking for existing asset folder: ${clusterId}`);
                     const listFoldersResponse = await axios.get(
                         `https://api.webflow.com/v2/sites/${siteId}/asset_folders`,
                         { headers: { "Authorization": `Bearer ${apiToken}` } }
                     );
-
                     const existingFolder = listFoldersResponse.data.assetFolders.find(f => f.displayName === clusterId);
 
                     if (existingFolder) {
-                        // If we find it, we use its ID.
                         subfolderId = existingFolder.id;
                         console.log(`Found existing subfolder with ID: ${subfolderId}`);
                     } else {
-                        // If and ONLY IF we don't find it, we create it.
-                        console.log(`No existing folder found. Creating a new one...`);
+                        // If it doesn't exist, TRY to create it.
                         try {
+                            console.log(`Step 3.2: No folder found. Attempting to create...`);
                             const createFolderResponse = await axios.post(
                                 `https://api.webflow.com/v2/sites/${siteId}/asset_folders`,
                                 { displayName: clusterId, parentFolder: parentAssetFolderId },
-                                { headers: { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" } }
+                                { headers: { "Authorization": `Bearer ${apiToken}` } }
                             );
                             subfolderId = createFolderResponse.data.id;
                             console.log(`Successfully created new subfolder with ID: ${subfolderId}`);
                         } catch (createError) {
-                            // This is a safety net. If creation fails with a conflict, it means
-                            // a parallel request just created it. We can consider this a non-fatal issue
-                            // and try to proceed, but log a clear warning.
+                            // If creation fails with a conflict, it means a parallel request beat us to it.
+                            // Now we MUST find that folder, retrying if necessary.
                             if (createError.response && createError.response.data.code === 'conflict') {
-                                console.warn("Caught a conflict error during folder creation. This can happen in a race condition. The upload may fail if the folder cannot be found in time.");
-                                // We don't have an ID, so the next step (asset registration) might fail,
-                                // but the user can simply try again. This prevents the server from crashing.
+                                console.log("Folder creation conflicted. Retrying to find the folder with delay...");
+
+                                let attempts = 0;
+                                const maxAttempts = 5;
+                                while (attempts < maxAttempts && !subfolderId) {
+                                    attempts++;
+                                    await new Promise(resolve => setTimeout(resolve, 500)); // Wait 500ms
+                                    
+                                    const retryListResponse = await axios.get(
+                                        `https://api.webflow.com/v2/sites/${siteId}/asset_folders`,
+                                        { headers: { "Authorization": `Bearer ${apiToken}` } }
+                                    );
+                                    const foundFolder = retryListResponse.data.assetFolders.find(f => f.displayName === clusterId);
+                                    if (foundFolder) {
+                                        subfolderId = foundFolder.id;
+                                        console.log(`Found folder on attempt #${attempts} with ID: ${subfolderId}`);
+                                    } else {
+                                        console.log(`Attempt #${attempts}: Folder not found yet...`);
+                                    }
+                                }
                             } else {
                                 // It was a different, more serious error.
                                 throw createError;
@@ -278,13 +292,10 @@ router.post('/:clusterId/image', async (req, res) => {
                         }
                     }
 
-                    // This check is a final safeguard.
+                    // Final safety check
                     if (!subfolderId) {
-                        // If, after all of that, we still don't have an ID, we cannot proceed.
-                        // This will provide a clear error message to the user.
-                        return res.status(500).json({ message: 'Could not create or find an asset folder for this cluster. Please try again in a moment.' });
+                        throw new Error('Could not create or find an asset folder for this cluster after multiple attempts.');
                     }
-
                 // --- STEP 3: Register new asset ---
                 const fileExtension = imageFile.originalFilename.split('.').pop();
                 const timestamp = Date.now();
