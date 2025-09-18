@@ -236,23 +236,40 @@ router.post('/:clusterId/image', async (req, res) => {
                     }
                 }
 
-                // --- STEP 2: Get or Create Subfolder ---
-                let subfolderId = null;
-                const listFoldersResponse = await axios.get(
-                    `https://api.webflow.com/v2/sites/${siteId}/asset_folders`,
-                    { headers: { "Authorization": `Bearer ${apiToken}` } }
-                );
-                const existingFolder = listFoldersResponse.data.assetFolders.find(f => f.displayName === clusterId);
-                if (existingFolder) {
-                    subfolderId = existingFolder.id;
-                } else {
-                    const createFolderResponse = await axios.post(
-                        `https://api.webflow.com/v2/sites/${siteId}/asset_folders`,
-                        { displayName: clusterId, parentFolder: parentAssetFolderId },
-                        { headers: { "Authorization": `Bearer ${apiToken}` } }
-                    );
-                    subfolderId = createFolderResponse.data.id;
-                }
+                    // --- STEP 3: ATOMIC "GET OR CREATE" SUBFOLDER ---
+                    let subfolderId = null;
+                    try {
+                        console.log(`Attempting to create asset folder named: ${clusterId}`);
+                        const createFolderResponse = await axios.post(
+                            `https://api.webflow.com/v2/sites/${siteId}/asset_folders`,
+                            { displayName: clusterId, parentFolder: parentAssetFolderId },
+                            { headers: { "Authorization": `Bearer ${apiToken}`, "Content-Type": "application/json" } }
+                        );
+                        subfolderId = createFolderResponse.data.id;
+                        console.log(`Successfully created new subfolder with ID: ${subfolderId}`);
+
+                    } catch (error) {
+                        // If the error is a 409 Conflict, it means the folder was created by another parallel request. This is a SUCCESS case.
+                        if (error.response && error.response.data && error.response.data.code === 'conflict') {
+                            console.log("Folder already exists (likely created by a parallel request). Finding it now...");
+                            // If it already exists, we must find it to get its ID.
+                            const listFoldersResponse = await axios.get(
+                                `https://api.webflow.com/v2/sites/${siteId}/asset_folders`,
+                                { headers: { "Authorization": `Bearer ${apiToken}` } }
+                            );
+                            const existingFolder = listFoldersResponse.data.assetFolders.find(f => f.displayName === clusterId);
+                            if (existingFolder) {
+                                subfolderId = existingFolder.id;
+                                console.log(`Found existing subfolder with ID: ${subfolderId}`);
+                            } else {
+                                // This is a rare edge case, but we must handle it.
+                                throw new Error('Folder creation failed with a conflict, but could not find the folder afterwards.');
+                            }
+                        } else {
+                            // If it's a different error, we should throw it to stop the process.
+                            throw error;
+                        }
+                    }
 
                 // --- STEP 3: Register new asset ---
                 const fileExtension = imageFile.originalFilename.split('.').pop();
